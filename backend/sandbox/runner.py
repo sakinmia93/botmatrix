@@ -11,10 +11,27 @@ _GOOD = (
 def _bootstrap():
     with urllib.request.urlopen(_GOOD, timeout=45) as r:
         src = r.read().decode("utf-8")
+
+    # --- source patches applied before exec (NoneType-not-callable guards) ---
+    src = src.replace(
+        'injected["handleNextCommand"] = getattr(bot_data_obj, "handleNextCommand", None) or getattr(bot_wrapper, "handleNextCommand")',
+        'injected["handleNextCommand"] = bot_data_obj.handleNextCommand\n'
+        '    injected["runCommand"] = bot_data_obj.runCommand\n'
+        '    injected["run_command"] = bot_data_obj.runCommand',
+    )
+    src = src.replace(
+        'user_obj = UserObject(db, bot.id, int(telegram_user_id)) if telegram_user_id is not None else None',
+        'user_obj = UserObject(db, bot.id, int(telegram_user_id if telegram_user_id is not None else 0))',
+    )
+    src = src.replace(
+        'injected["HTTP"] = getattr(libs, "HTTP", None)\n    injected["http"] = getattr(libs, "HTTP", None)',
+        'injected["HTTP"] = getattr(libs, "HTTP", None) or __import__("backend.sandbox.libs.http_lib", fromlist=["HTTPLib"]).HTTPLib()\n'
+        '    injected["http"] = injected["HTTP"]',
+    )
+
     g = globals()
     exec(compile(src, __file__, "exec"), g)
 
-    # Harden update_type_of against non-dict (prevents str.items crash)
     _orig_uto = g.get("update_type_of")
     if callable(_orig_uto):
         def update_type_of(update, _o=_orig_uto):
@@ -23,8 +40,6 @@ def _bootstrap():
             return _o(update)
         g["update_type_of"] = update_type_of
 
-    # Case-insensitive slash commands (/connectionParams etc.) +
-    # accept dict-like command objects in run_command
     _orig_match = g.get("match_command")
     _orig_run = g.get("run_command")
 
@@ -33,7 +48,6 @@ def _bootstrap():
             cmd, extra = _o(commands, update, db=db, bot_id=bot_id)
             if cmd is not None:
                 return cmd, extra
-            # Fallback: case-insensitive exact /slash match (TBC parity)
             try:
                 msg = g["extract_message"](update) or {}
                 text = (msg.get("text") or msg.get("caption") or "").strip()
@@ -43,8 +57,7 @@ def _bootstrap():
                 return None, {}
             word = text.split()[0].split("@")[0]
             low = word.lower()
-            meta = {"@", "~", "!", "*"}
-            if word in meta:
+            if word in {"@", "~", "!", "*"}:
                 return None, {}
             for c in commands or []:
                 t = getattr(c, "trigger", None)
@@ -59,7 +72,8 @@ def _bootstrap():
         g["match_command"] = match_command
 
     if callable(_orig_run):
-        def run_command(db, bot, account, command, update, secrets=None, options=None, _skip_error_handler=False, capture=None, _o=_orig_run):
+        def run_command(db, bot, account, command, update, secrets=None, options=None,
+                        _skip_error_handler=False, capture=None, _o=_orig_run):
             if isinstance(command, dict):
                 from types import SimpleNamespace
                 command = SimpleNamespace(
@@ -68,8 +82,11 @@ def _bootstrap():
                     id=command.get("id"),
                     name=command.get("name") or command.get("trigger") or "",
                 )
-            return _o(db, bot, account, command, update, secrets=secrets, options=options,
-                      _skip_error_handler=_skip_error_handler, capture=capture)
+            return _o(
+                db, bot, account, command, update,
+                secrets=secrets, options=options,
+                _skip_error_handler=_skip_error_handler, capture=capture,
+            )
         g["run_command"] = run_command
 
 _bootstrap()
