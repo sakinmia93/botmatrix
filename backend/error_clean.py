@@ -117,6 +117,14 @@ def hint_for(exc_type: str, message: str) -> str:
     for rx, h in _HINTS:
         if re.search(rx, m):
             return h
+    # Fallback: go-telebot catalog in telegram/api_errors.py
+    try:
+        from backend.telegram.api_errors import lookup
+        _code, _name, hint = lookup(message or "", 0)
+        if hint and _name != "TelegramAPIError":
+            return hint
+    except Exception:
+        pass
     return ""
 
 
