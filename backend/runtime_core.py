@@ -215,13 +215,14 @@ def process_update(bot_id: str, update: dict) -> None:
 
 def _run_pipeline(db, eb, bot_id: str, owner: str, update: dict) -> None:
     try:
+        if not isinstance(update, dict):
+            log.warning("_run_pipeline: update is not a dict (%s)", type(update).__name__)
+            return
         cmds = db.query(em.Command).filter_by(bot_id=eb.id).all()
-        commands = [{"trigger": c.trigger, "code": c.code, "name": c.trigger} for c in cmds]
         secrets = {}
         acc = db.query(em.Account).filter_by(id=eb.owner_id).first()
-        msg = extract_message(update) or {}
-        text = (msg.get("text") or msg.get("caption") or "") or ""
-        matched = match_command(commands, text, update)
+        # match_command(commands, update, db=None, bot_id=None) → (cmd|None, extra)
+        matched, _extra = match_command(cmds, update, db=db, bot_id=eb.id)
         if matched:
             run_command(db, eb, acc, matched, update, secrets=secrets)
     except Exception:
