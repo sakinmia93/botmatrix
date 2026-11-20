@@ -33,6 +33,13 @@ _PRE_SANDBOX_GUARD = '''
         if injected.get("Request") is None:
             from backend.sandbox.libs.request_lib import RequestModule as _RM2
             injected["Request"] = _RM2(bot.id, uid_int)
+        # TBC parity: if options was double-wrapped as {options, value[, params]},
+        # expose the scalar so `if options == "change_bal"` works.
+        _opt = injected.get("options")
+        if isinstance(_opt, dict) and "options" in _opt and "json" not in _opt and "data" not in _opt and not _opt.get("__in_error_handler"):
+            _inner = _opt.get("options")
+            if isinstance(_inner, (str, int, float, bool)) or _inner is None:
+                injected["options"] = _inner if _inner != "" else None
 '''
 
 def _bootstrap():
@@ -57,7 +64,22 @@ def _bootstrap():
         'injected["HTTP"] = getattr(libs, "HTTP", None) or __import__("backend.sandbox.libs.http_lib", fromlist=["HTTPLib"]).HTTPLib()\n'
         '    injected["http"] = injected["HTTP"]',
     )
-    # 4) Final guard right before sandbox exec
+    # 4) Fix options injection: unwrap {options, params, value} even without params key
+    src = src.replace(
+        '"options": (\n'
+        '            options_obj.get("options") if isinstance(options_obj, dict) and "options" in options_obj and "params" in options_obj\n'
+        '            else options_obj\n'
+        '        )',
+        '"options": (\n'
+        '            options_obj.get("options") if (
+                isinstance(options_obj, dict) and "options" in options_obj
+                and "json" not in options_obj and "data" not in options_obj
+                and not options_obj.get("__in_error_handler")
+                and isinstance(options_obj.get("options"), (str, int, float, bool, type(None)))
+            ) else options_obj\n'
+        '        )',
+    )
+    # 5) Final guard right before sandbox exec
     needle = '        run_sandboxed(code_to_run, injected, timeout_seconds=MAX_EXEC_SECONDS)'
     if needle in src and _PRE_SANDBOX_GUARD not in src:
         src = src.replace(needle, _PRE_SANDBOX_GUARD + "\n" + needle)
@@ -115,6 +137,15 @@ def _bootstrap():
                     id=command.get("id"),
                     name=command.get("name") or command.get("trigger") or "",
                 )
+            # TBC: unwrap accidental {options, value} wrapper before run
+            if isinstance(options, dict) and "options" in options and "json" not in options and "data" not in options and not options.get("__in_error_handler"):
+                inner = options.get("options")
+                if isinstance(inner, (str, int, float, bool)) or inner is None:
+                    # Keep params if present by re-wrapping only when needed
+                    if options.get("params") is not None:
+                        options = {"options": inner, "params": options.get("params"), "value": inner}
+                    else:
+                        options = inner
             return _o(
                 db, bot, account, command, update,
                 secrets=secrets, options=options,
