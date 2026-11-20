@@ -73,6 +73,19 @@ def get_me(token: str) -> dict:
     return call(token, "getMe", timeout=15)
 
 
+def get_updates(token: str, offset: int = 0, timeout: int = 25, allowed_updates=None, limit: int = 100):
+    """Long-poll getUpdates. HTTP timeout is slightly larger than the long-poll wait."""
+    payload = {
+        "offset": int(offset or 0),
+        "timeout": int(timeout or 0),
+        "limit": max(1, min(int(limit or 100), 100)),
+    }
+    if allowed_updates is not None:
+        payload["allowed_updates"] = list(allowed_updates)
+    http_timeout = float(timeout) + 10.0 if timeout else 20.0
+    return call(token, "getUpdates", payload, timeout=http_timeout) or []
+
+
 def profile_photo_url(token: str, user_id: int) -> str:
     """Telegram file path of the first profile photo, or ''. The file URL embeds the bot token,
     so callers must proxy it (see /api/media) instead of exposing it to browsers."""
