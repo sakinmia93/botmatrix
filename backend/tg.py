@@ -12,20 +12,22 @@ _session = requests.Session()
 _adapter = requests.adapters.HTTPAdapter(pool_connections=64, pool_maxsize=512, max_retries=0)
 _session.mount("https://", _adapter)
 _session.mount("http://", _adapter)
-# Honor system / env proxies (HTTP_PROXY, HTTPS_PROXY) automatically via requests
 
 
 class TgError(Exception):
     def __init__(self, description: str, code: int = 0, retry_after: float = 0):
-        super().__init__(description)
         self.description = description
         self.code = code
         self.retry_after = retry_after
+        try:
+            from backend.telegram.api_errors import enrich
+            msg = enrich(description, code)
+        except Exception:
+            msg = description
+        super().__init__(msg)
 
     @property
     def unreachable(self) -> bool:
-        """The user can never receive this bot's messages: blocked the bot, deleted/deactivated Telegram, or never started it.
-        Everything else (flood limits, bad formatting, network trouble…) is a temporary or content problem, not the user's fault."""
         d = self.description.lower()
         return any(x in d for x in ("bot was blocked by the user", "user is deactivated", "chat not found", "user not found",
                                     "can't initiate conversation", "cannot initiate conversation", "peer_id_invalid",
@@ -95,8 +97,6 @@ def drop_webhook(token: str) -> None:
 
 
 def profile_photo_url(token: str, user_id: int) -> str:
-    """Telegram file path of the first profile photo, or ''. The file URL embeds the bot token,
-    so callers must proxy it (see /api/media) instead of exposing it to browsers."""
     try:
         ph = call(token, "getUserProfilePhotos", {"user_id": int(user_id), "limit": 1}, timeout=10)
         photos = (ph or {}).get("photos") or []
@@ -121,7 +121,6 @@ def download_file(token: str, file_path: str, max_bytes: int = 2_000_000) -> Opt
 
 
 def call_upload(token: str, method: str, payload: dict, field: str, filename: str, content: bytes, mime: str = "application/octet-stream", timeout: float = 120) -> Any:
-    """Send a method with a file uploaded straight from memory (nothing touches the disk)."""
     import json as _json
     data = {k: (_json.dumps(v) if isinstance(v, (dict, list)) else v) for k, v in (payload or {}).items() if v is not None}
     last_err: Optional[BaseException] = None
@@ -147,7 +146,6 @@ def call_upload(token: str, method: str, payload: dict, field: str, filename: st
 
 
 def file_id_of(result: dict, field: str) -> str:
-    """Pull the reusable file_id out of a send* result."""
     if not isinstance(result, dict):
         return ""
     v = result.get(field)
