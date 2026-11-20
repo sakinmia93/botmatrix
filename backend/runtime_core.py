@@ -100,19 +100,27 @@ def sync_bot(bot_id: str, db=None) -> Optional[int]:
         eb.deleted_at = None
         cmds = appdb.jload(b["commands_json"], [])
         want = {}
+        meta = {"@", "~", "!", "*", ".env"}
+
+        def _register_trigger(trig: str, cmd: dict) -> None:
+            """Register a trigger and its slash / non-slash twin for matching."""
+            trig = (trig or "").strip()
+            if not trig or trig in want:
+                return
+            want[trig] = cmd
+            if trig in meta or trig.startswith("/handler_"):
+                return
+            twin = trig[1:] if trig.startswith("/") else ("/" + trig)
+            if twin and twin not in want:
+                want[twin] = cmd
+
         for cmd in cmds:
             name = str(cmd.get("name") or "").strip()
             if not name:
                 continue
-            want[name] = cmd
-            if name not in ("@", "~", "!", "*", ".env") and not name.startswith("/handler_"):
-                alt = name[1:] if name.startswith("/") else ("/" + name)
-                if alt and alt not in want:
-                    want[alt] = cmd
+            _register_trigger(name, cmd)
             for al in cmd.get("aliases") or []:
-                al = str(al).strip()
-                if al and al not in want:
-                    want[al] = cmd
+                _register_trigger(str(al).strip() if al is not None else "", cmd)
         env = _env_code(appdb.jload(b["env_vars_json"], []))
         if env:
             want[".env"] = {"code": env}
@@ -221,8 +229,6 @@ def _run_pipeline(db, eb, bot_id: str, owner: str, update: dict) -> None:
         cmds = db.query(em.Command).filter_by(bot_id=eb.id).all()
         secrets = {}
         acc = db.query(em.Account).filter_by(id=eb.owner_id).first()
-        # match_command returns (cmd|None, extra). extra carries handleNextCommand
-        # options/params and MUST be forwarded or conversation replies stay silent.
         matched, extra = match_command(cmds, update, db=db, bot_id=eb.id)
         if matched:
             opts = extra
