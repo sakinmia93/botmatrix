@@ -86,6 +86,14 @@ def get_updates(token: str, offset: int = 0, timeout: int = 25, allowed_updates=
     return call(token, "getUpdates", payload, timeout=http_timeout) or []
 
 
+def drop_webhook(token: str) -> None:
+    """Clear any Telegram webhook so getUpdates polling does not 409-conflict."""
+    try:
+        call(token, "deleteWebhook", {"drop_pending_updates": False}, timeout=15)
+    except Exception:
+        pass
+
+
 def profile_photo_url(token: str, user_id: int) -> str:
     """Telegram file path of the first profile photo, or ''. The file URL embeds the bot token,
     so callers must proxy it (see /api/media) instead of exposing it to browsers."""
