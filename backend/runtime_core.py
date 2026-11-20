@@ -243,9 +243,9 @@ def run_external(eb_pk: int, trigger: str, update: dict, options=None) -> dict:
         cmds = db.query(em.Command).filter_by(bot_id=eb.id).all()
         cmd = next((c for c in cmds if c.trigger == trigger or c.trigger == f"/{trigger.lstrip('/')}"), None)
         if not cmd:
-            cmd = {"trigger": trigger, "code": "", "name": trigger}
-        else:
-            cmd = {"trigger": cmd.trigger, "code": cmd.code, "name": cmd.trigger}
+            # run_command expects an object with .trigger / .code attributes
+            from types import SimpleNamespace
+            cmd = SimpleNamespace(trigger=trigger, code="", name=trigger, id=None)
         r = run_command(db, eb, acc, cmd, update, secrets={}, options=options or {})
         return {"ok": True, "webhook_result": r.get("webhook_result") if isinstance(r, dict) else None, **(r if isinstance(r, dict) else {})}
     except Exception as e:
