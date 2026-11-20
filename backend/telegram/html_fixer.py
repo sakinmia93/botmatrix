@@ -1,28 +1,26 @@
 """
-Auto HTML Fixer — automatically repairs broken/invalid HTML in outgoing
-Telegram message text and captions so `parse_mode="HTML"` never crashes
-with a "can't parse entities" error.
+Auto HTML Fixer — repairs broken/invalid HTML in outgoing Telegram text/captions
+so parse_mode="HTML" never fails with "can't parse entities".
 
 Handles:
   - Unclosed tags            <i>hello           -> <i>hello</i>
-  - Wrong / crossed nesting  <b>bold <i>x</b></i> -> <b>bold <i>x</i></b>
-  - Invalid/unsupported tags <div>hello</div>    -> hello (tag stripped, text kept)
-  - Common tag-name typos    <stong>x</stong>    -> <strong>x</strong>
-  - Stray/unmatched closing tags -> dropped safely
-  - Auto-escapes raw `&`, unescaped `<`/`>` that aren't part of a real tag
-
-This is a small hand-written tokenizer + stack-based balancer — no external
-HTML library dependency required.
+  - Empty close tags         <code>0.0</>       -> <code>0.0</code>
+  - Wrong / crossed nesting  <b>bold <i>x</b></i> -> balanced
+  - Invalid/unsupported tags stripped (text kept)
+  - Tag-name typos           <stong>x</stong>   -> <strong>x</strong>
+  - Stray closing tags       dropped
+  - Bare & auto-escaped
+  - Markdown light balance when parse_mode is Markdown*
 """
+from __future__ import annotations
+
 import re
 
-# Tags Telegram's Bot API actually supports for parse_mode="HTML"
 ALLOWED_TAGS = {
     "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
     "span", "a", "code", "pre", "tg-spoiler", "tg-emoji", "blockquote",
 }
 
-# Common typos / aliases users make -> corrected tag name
 TAG_ALIASES = {
     "stong": "strong", "stronge": "strong", "sttrong": "strong",
     "bol": "b", "italic": "i", "itallic": "i", "emm": "em",
@@ -33,7 +31,10 @@ TAG_ALIASES = {
     "link": "a",
 }
 
-_TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^<>]*)?)\s*(/?)>")
+# Matches normal tags AND empty close `</>` (closes top of stack)
+_TAG_RE = re.compile(
+    r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^<>]*)?)\s*(/?)>|</>"
+)
 
 
 def _normalize_tag_name(name: str) -> str:
@@ -42,30 +43,32 @@ def _normalize_tag_name(name: str) -> str:
 
 
 def fix_html(text: str) -> str:
-    """Returns a version of `text` that is guaranteed to be valid,
-    Telegram-parseable HTML (balanced tags, only allowed tag names)."""
+    """Return Telegram-safe balanced HTML."""
     if not text:
         return text
 
-    tokens = []  # list of ("text", str) | ("open", name, attrs) | ("close", name) | ("selfclose", name, attrs)
+    tokens = []
     pos = 0
     for m in _TAG_RE.finditer(text):
         if m.start() > pos:
             tokens.append(("text", text[pos:m.start()]))
-        is_close, raw_name, attrs, self_close = m.group(1), m.group(2), m.group(3) or "", m.group(4)
-        name = _normalize_tag_name(raw_name)
-        if is_close:
-            tokens.append(("close", name))
-        elif self_close:
-            tokens.append(("selfclose", name, attrs))
+        if m.group(0) == "</>":
+            tokens.append(("close_top",))
         else:
-            tokens.append(("open", name, attrs))
+            is_close, raw_name, attrs, self_close = m.group(1), m.group(2), m.group(3) or "", m.group(4)
+            name = _normalize_tag_name(raw_name)
+            if is_close:
+                tokens.append(("close", name))
+            elif self_close:
+                tokens.append(("selfclose", name, attrs))
+            else:
+                tokens.append(("open", name, attrs))
         pos = m.end()
     if pos < len(text):
         tokens.append(("text", text[pos:]))
 
     output = []
-    stack = []  # list of (name, attrs)
+    stack = []
 
     def emit_open(name, attrs):
         output.append(f"<{name}{attrs}>")
@@ -80,11 +83,8 @@ def fix_html(text: str) -> str:
         elif kind == "open":
             _, name, attrs = tok
             if name not in ALLOWED_TAGS:
-                continue  # strip invalid tag, keep surrounding text
-            if stack and stack[-1] == name and not attrs.strip():
-                # Heuristic: the same tag opened twice in a row with no new
-                # attributes almost always means the user forgot the '/' on
-                # what was meant to be a closing tag, e.g. "<b>hi<b>" -> "<b>hi</b>"
+                continue
+            if stack and stack[-1] == name and not (attrs or "").strip():
                 emit_close(stack.pop())
                 continue
             stack.append(name)
@@ -93,24 +93,21 @@ def fix_html(text: str) -> str:
             _, name, attrs = tok
             if name not in ALLOWED_TAGS:
                 continue
-            # Telegram HTML has no real self-closing tags other than <br> (unsupported) —
-            # treat as open+close immediately.
             emit_open(name, attrs)
             emit_close(name)
+        elif kind == "close_top":
+            if stack:
+                emit_close(stack.pop())
         elif kind == "close":
             name = tok[1]
             if name not in ALLOWED_TAGS:
                 continue
             if name in stack:
-                # Close everything opened after `name` too (fixes crossed nesting,
-                # e.g. <b>bold <i>x</b></i> -> close i, then close b, don't reopen)
                 while stack and stack[-1] != name:
                     emit_close(stack.pop())
                 if stack and stack[-1] == name:
                     emit_close(stack.pop())
-            # else: stray/unmatched closing tag -> silently dropped
 
-    # Auto-close anything still open, innermost first
     while stack:
         emit_close(stack.pop())
 
@@ -118,12 +115,21 @@ def fix_html(text: str) -> str:
 
 
 def _escape_bare_text(chunk: str) -> str:
-    """Escapes a stray literal '&' that isn't already part of a valid HTML
-    entity, so Telegram doesn't choke on things like 'Tom & Jerry'."""
-    return re.sub(r"&(?!(?:amp|lt|gt|quot|#\d+|#x[0-9a-fA-F]+);)", "&amp;", chunk)
+    return re.sub(r"&(?!(?:amp|lt|gt|quot|#\d+|#x[0-9a-fA-F]+);)", "&", chunk)
 
 
-# Fields to auto-fix, per Telegram method name
+def fix_markdown(text: str) -> str:
+    """Light Markdown safety: balance unpaired * _ `."""
+    if not text:
+        return text
+    out = text
+    for ch in ("*", "_", "`"):
+        n = len(re.findall(r"(?<!\\)" + re.escape(ch), out))
+        if n % 2 == 1:
+            out = out + ch
+    return out
+
+
 HTML_FIELDS_BY_METHOD = {
     "sendMessage": ["text"],
     "sendPhoto": ["caption"],
@@ -147,29 +153,22 @@ def _looks_like_html(s: str) -> bool:
 
 
 def apply_auto_html_fix(method: str, data: dict) -> dict:
-    """Mutates & returns `data` in place: fixes HTML fields for the given
-    Telegram method and forces parse_mode=HTML when HTML is detected.
-
-    - parse_mode "Html"/"html"/"HTML" → normalized to "HTML"
-    - If text contains HTML tags, always fix + set HTML mode
-      (even if parse_mode was missing or a typo)
-    - Markdown/MarkdownV2 left alone only when no HTML tags are present
-    """
-    # normalize method key variants
-    fields = HTML_FIELDS_BY_METHOD.get(method) or HTML_FIELDS_BY_METHOD.get(
-        method[:1].lower() + method[1:] if method else method
-    )
-    if not fields:
-        # still normalize parse_mode casing
-        pm = data.get("parse_mode")
-        if pm and str(pm).lower() == "html":
-            data["parse_mode"] = "HTML"
-        return data
+    """Fix HTML/Markdown fields; force parse_mode=HTML when tags found."""
+    fields = HTML_FIELDS_BY_METHOD.get(method)
+    if not fields and method:
+        for k, v in HTML_FIELDS_BY_METHOD.items():
+            if k.lower() == method.lower():
+                fields = v
+                break
 
     explicit_mode = data.get("parse_mode")
     mode_l = str(explicit_mode).lower() if explicit_mode is not None else ""
 
-    # Detect HTML in any relevant field
+    if not fields:
+        if mode_l == "html":
+            data["parse_mode"] = "HTML"
+        return data
+
     has_html = False
     for field in fields:
         val = data.get(field)
@@ -177,8 +176,11 @@ def apply_auto_html_fix(method: str, data: dict) -> dict:
             has_html = True
             break
 
-    # User asked Markdown and text has no HTML tags → leave alone
     if mode_l in ("markdown", "markdownv2") and not has_html:
+        for field in fields:
+            val = data.get(field)
+            if isinstance(val, str) and val:
+                data[field] = fix_markdown(val)
         return data
 
     touched = False
