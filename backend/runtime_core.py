@@ -221,7 +221,6 @@ def _run_pipeline(db, eb, bot_id: str, owner: str, update: dict) -> None:
         cmds = db.query(em.Command).filter_by(bot_id=eb.id).all()
         secrets = {}
         acc = db.query(em.Account).filter_by(id=eb.owner_id).first()
-        # match_command(commands, update, db=None, bot_id=None) → (cmd|None, extra)
         matched, _extra = match_command(cmds, update, db=db, bot_id=eb.id)
         if matched:
             run_command(db, eb, acc, matched, update, secrets=secrets)
@@ -243,7 +242,6 @@ def run_external(eb_pk: int, trigger: str, update: dict, options=None) -> dict:
         cmds = db.query(em.Command).filter_by(bot_id=eb.id).all()
         cmd = next((c for c in cmds if c.trigger == trigger or c.trigger == f"/{trigger.lstrip('/')}"), None)
         if not cmd:
-            # run_command expects an object with .trigger / .code attributes
             from types import SimpleNamespace
             cmd = SimpleNamespace(trigger=trigger, code="", name=trigger, id=None)
         r = run_command(db, eb, acc, cmd, update, secrets={}, options=options or {})
@@ -283,13 +281,31 @@ class Worker(threading.Thread):
 
     def run(self):
         offset = _offsets.get(self.bot_id, 0)
+        try:
+            if hasattr(tg, "drop_webhook"):
+                tg.drop_webhook(self.token)
+            else:
+                tg.call(self.token, "deleteWebhook", {"drop_pending_updates": False}, timeout=15)
+        except Exception:
+            pass
         while not self._stop.is_set() and self.bot_id not in _stopping:
             try:
-                ups = tg.get_updates(self.token, offset=offset, timeout=25 if not self.fast else 5)
+                to = 5 if self.fast else 25
+                if self._stop.is_set():
+                    break
+                ups = tg.get_updates(self.token, offset=offset, timeout=to)
                 for up in ups or []:
                     offset = max(offset, int(up.get("update_id", 0)) + 1)
                     _offsets[self.bot_id] = offset
                     _pool.submit(process_update, self.bot_id, up)
+            except tg.TgError as e:
+                desc = (e.description or str(e) or "")
+                if e.code == 401 or "Unauthorized" in desc:
+                    _auto_stop(self.bot_id, desc)
+                    break
+                wait = float(e.retry_after or 0) or (8.0 if e.code == 409 or "Conflict" in desc else 3.0)
+                log.warning("poll %s: %s (sleep %.1fs)", self.bot_id, desc, wait)
+                time.sleep(min(wait, 30.0))
             except Exception as e:
                 if "401" in str(e) or "Unauthorized" in str(e):
                     _auto_stop(self.bot_id, str(e))
@@ -310,7 +326,7 @@ def stop_worker(bot_id: str) -> None:
     if w:
         w._stop.set()
         try:
-            w.join(timeout=2)
+            w.join(timeout=8)
         except Exception:
             pass
     with _lock:
@@ -335,13 +351,14 @@ def set_running(bot_id: str, running: bool, db=None) -> dict:
             pass
         return {"running": False}
     with _lock:
-        if bot_id in _workers:
+        if bot_id in _workers and bot_id not in _stopping:
             with appdb.db() as c:
                 c.execute(
                     "UPDATE bots SET status='working', uptime=COALESCE(NULLIF(uptime,''), ?), updated_at=? WHERE id=?",
                     (appdb.now_iso(), appdb.now_iso(), bot_id),
                 )
             return {"running": True}
+    stop_worker(bot_id)
     with appdb.read() as c:
         b = appdb.one(c, "SELECT token, faster_response FROM bots WHERE id=?", (bot_id,))
     if not b:
