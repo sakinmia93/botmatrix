@@ -1,7 +1,6 @@
 """Business logic for the web API. Every function takes the signed-in user's id and only touches that user's rows."""
 from __future__ import annotations
 
-import re
 import urllib.request
 
 _GOOD = (
@@ -9,50 +8,26 @@ _GOOD = (
     "8c289deb6228817bb0c28e764459976d945d294a/backend/services.py"
 )
 
-# Platform-internal key prefixes never shown in the Database tab
+# Only PLATFORM main/server keys are excluded from the Database tab.
+# User command data (Bot.saveData / User.saveData) is shown in full — never masked.
 _PLATFORM_KEY_PREFIXES = (
-    "__",
-    "secret:",
-    "_platform",
-    "_sys",
-    "_internal",
-    "__webhook",
-    "__runtime",
-    "__engine",
+    "__",          # e.g. __webhook_secret, __blocked_*, __runtime_*
+    "secret:",     # reserved secret namespace
+    "_platform",   # platform namespace
+    "_sys:",       # system namespace
+    "_internal:",  # internal namespace
 )
-
-# Keys that often hold secrets written by user scripts — hide value in UI
-_SECRET_KEY_HINTS = (
-    "token", "api_key", "apikey", "secret", "password", "passwd",
-    "private", "webhook", "hmac", "jwt", "session",
-)
-
-_TOKEN_RE = re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{20,}\b")
-_WEBHOOK_SIGNED_RE = re.compile(r"https?://[^\s\"']+/api/new-webhook\?data=[A-Za-z0-9_\-.=]+")
-_LONG_SECRET_RE = re.compile(r"\b[A-Za-z0-9_\-]{40,}\b")
 
 
 def _is_platform_key(key: str) -> bool:
+    """True only for server/platform main keys — never for user/order data."""
     k = str(key or "")
-    low = k.lower()
-    if any(k.startswith(p) or low.startswith(p.lower()) for p in _PLATFORM_KEY_PREFIXES):
-        return True
+    if not k:
+        return False
+    for p in _PLATFORM_KEY_PREFIXES:
+        if k.startswith(p):
+            return True
     return False
-
-
-def _redact_value(key: str, value: str) -> str:
-    """Mask secrets in Database tab values. Never leak tokens or signed webhook URLs."""
-    if value is None:
-        return ""
-    s = str(value)
-    low_key = str(key or "").lower()
-    if any(h in low_key for h in _SECRET_KEY_HINTS):
-        if len(s) > 8:
-            return s[:3] + "…" + "*" * min(12, len(s) - 3)
-        return "***"
-    s = _TOKEN_RE.sub("<bot token hidden>", s)
-    s = _WEBHOOK_SIGNED_RE.sub("<webhook url hidden>", s)
-    return s
 
 
 def _bootstrap():
@@ -61,14 +36,14 @@ def _bootstrap():
     g = globals()
     exec(compile(src, __file__, "exec"), g)
 
-    # Expand hidden key prefixes used by kv_data / kv_set
+    # Expand _HIDDEN so SQL filter in kv_data excludes platform keys at query time
     existing = g.get("_HIDDEN") or ("__", "secret:")
-    if isinstance(existing, tuple):
+    if isinstance(existing, (tuple, list)):
         g["_HIDDEN"] = tuple(dict.fromkeys(list(existing) + list(_PLATFORM_KEY_PREFIXES)))
     else:
         g["_HIDDEN"] = _PLATFORM_KEY_PREFIXES
 
-    # Wrap kv_data to filter platform keys + redact secrets
+    # Extra filter: drop any platform key that slipped through (no value masking)
     _orig_kv = g.get("kv_data")
     if callable(_orig_kv):
         def kv_data(uid, bot_id, q=None, _o=_orig_kv):
@@ -76,27 +51,13 @@ def _bootstrap():
             if not isinstance(result, dict):
                 return result
             rows = result.get("rows") or []
-            clean = []
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                key = row.get("key") or ""
-                if _is_platform_key(key):
-                    continue
-                r = dict(row)
-                if "value" in r and r["value"] is not None:
-                    r["value"] = _redact_value(key, r["value"])
-                clean.append(r)
-            result = dict(result)
-            result["rows"] = clean
-            # recount after filter (approximate page-level)
-            if result.get("counts") and isinstance(result["counts"], dict):
-                # do not inflate counts with hidden rows on this page
-                pass
-            return result
+            clean = [r for r in rows if isinstance(r, dict) and not _is_platform_key(r.get("key") or "")]
+            out = dict(result)
+            out["rows"] = clean
+            return out
         g["kv_data"] = kv_data
 
-    # Block writing platform keys
+    # Refuse writing platform main keys from the Database UI
     _orig_set = g.get("kv_set")
     if callable(_orig_set):
         def kv_set(uid, bot_id, body, _o=_orig_set):
@@ -107,7 +68,7 @@ def _bootstrap():
             return _o(uid, bot_id, body)
         g["kv_set"] = kv_set
 
-    # Alias validation (existing)
+    # Command aliases validation
     _orig = g.get("_clean_commands")
     if callable(_orig):
         def _clean_commands(cmds):
