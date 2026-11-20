@@ -125,15 +125,8 @@ def _looks_like_chat_id(value) -> bool:
     return False
 
 def _coerce_tg_id(v):
-    """Unwrap TBC wrappers (_TBCNum etc.) and coerce to int for Telegram id fields.
-
-    User.getData() wraps ints as _TBCNum so .replace works. Without unwrapping,
-    message_id becomes the JSON string '\"123\"' and Telegram returns
-    'message to edit not found'.
-    """
     if v is None or isinstance(v, bool):
         return v
-    # _TBCNum / any object exposing the raw number as ._v
     if not isinstance(v, (str, int, float, bytes)) and hasattr(v, "_v"):
         try:
             inner = v._v
@@ -154,7 +147,6 @@ def _coerce_tg_id(v):
         if s.lstrip("-").isdigit():
             return int(s)
         return v
-    # last resort: objects implementing __int__
     try:
         if hasattr(v, "__int__") and not isinstance(v, (str, bytes)):
             return int(v)
@@ -196,7 +188,12 @@ class TelegramAPIError(Exception):
         self.description = description
         self.error_code = error_code
         self.payload = payload or {}
-        super().__init__(f"[{error_code}] {description}")
+        try:
+            from backend.telegram.api_errors import enrich
+            msg = enrich(description, error_code)
+        except Exception:
+            msg = f"[{error_code}] {description}"
+        super().__init__(msg)
 
 class BotWrapper:
     def __init__(self, token: str, default_chat_id: Optional[int] = None, timeout: int = 10,
