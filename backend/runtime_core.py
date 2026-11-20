@@ -221,9 +221,14 @@ def _run_pipeline(db, eb, bot_id: str, owner: str, update: dict) -> None:
         cmds = db.query(em.Command).filter_by(bot_id=eb.id).all()
         secrets = {}
         acc = db.query(em.Account).filter_by(id=eb.owner_id).first()
-        matched, _extra = match_command(cmds, update, db=db, bot_id=eb.id)
+        # match_command returns (cmd|None, extra). extra carries handleNextCommand
+        # options/params and MUST be forwarded or conversation replies stay silent.
+        matched, extra = match_command(cmds, update, db=db, bot_id=eb.id)
         if matched:
-            run_command(db, eb, acc, matched, update, secrets=secrets)
+            opts = extra
+            if opts is not None and not isinstance(opts, dict):
+                opts = {"options": opts, "value": opts}
+            run_command(db, eb, acc, matched, update, secrets=secrets, options=opts)
     except Exception:
         log.exception("_run_pipeline")
 
