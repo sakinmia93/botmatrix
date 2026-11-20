@@ -1,0 +1,79 @@
+
+r1 = JSON.decode(JSON.encode({"a": [1, 2]}))
+out = ['json=' + str(r1["a"][1]), 'p=' + str(JSON.parse('{"x":3}')["x"]), 'dumps=' + JSON.dumps({"k": 1})]
+out.append('url=' + URL.encode('a b&c') + '|' + URL.decode('a%20b') + '|' + str(URL.parseQuery('?x=1&y=2')['y']))
+out.append('hash=' + Hash.md5('a')[:6] + Hash.sha1('a')[:6] + Hash.sha256('a')[:6])
+S = Lib.Security
+out.append('sec=' + S.hashSHA256('a')[:6] + S.hashSHA512('a')[:6] + S.hashMD5('a')[:6])
+sig = S.signHMAC('k', 'payload', 'sha256')
+out.append('hmac=' + str(S.verifyHMAC('k', 'payload', sig, 'sha256')))
+out.append('ed=' + str(S.verifyEd25519('00' * 32, 'x', '00' * 64)))
+oxsig = S.signHMAC('mk', '{"a":1}', 'sha512')
+out.append('gw=' + str(S.verifyPaymentGatewayWebhook('oxapay', '{"a":1}', oxsig, 'mk')) + str(S.verifyPaymentGatewayWebhook('oxapay', '{"a":1}', 'bad', 'mk')))
+R = Lib.Random
+out.append('rnd=' + str(len(R.hex(10))) + str(len(R.bytes(5))) + str(len(R.password(14))) + str(len(R.sample([1,2,3,4], 2))) + str(R.boolean() in (True, False)) + str(0 <= R.range(5) < 5) + str(isinstance(R.gaussian(0, 1), float)) + str(len(R.uuid())))
+Account.storeData('tbsk', {'a': 1})
+out.append('acct=' + str(Account.fetchData('tbsk')['a']) + str(Account.exportData('tbsk', 'json').read().decode()[:1] == '{') + str(Account.exportAllData(output_format='txt').read().decode().count('tbsk')))
+Account.removeData('tbsk')
+out.append('acct2=' + str(Account.fetchData('tbsk')))
+Account.banUser(777)
+out.append('ban=' + str([str(x) for x in Account.bannedUsers()]) + str(Account.exportBannedUsersFile(None, 'csv').read().decode().count('777')))
+Account.unbanUser(777)
+out.append('unban=' + str(len(Account.bannedUsers())))
+out.append('stats=' + str('bots' in str(Account.stats())) + str(len(Account.botsStats()['result']) >= 1))
+Account.res('gold').add(5)
+out.append('ares=' + str(int(Account.res('gold').value())))
+Admin.res('pts').add(3)
+a1 = Admin.res('pts').exportAllData(5)
+out.append('adm=' + str(len(a1)) + str(Admin.res('pts').fetchAllResourcesOfUser(u, 'csv').read().decode().count('pts')))
+Admin.res('pts').removeAllData()
+out.append('adm2=' + str(len(Admin.res('pts').exportAllData(5))))
+Api.sendMessage('via Api')
+G = Lib.TeleGifts
+out.append('gift=' + str(len(G.getGiftCatalog()) > 3) + str(G.searchGifts('heart') is not None) + str(isinstance(G.getGiftsByCategory(), dict)))
+G.setGiftSetting('mode', 'x')
+out.append('gset=' + str(G.getGiftSetting('mode')) + str(G.getAllGiftSettings().get('mode')))
+E = Lib.EVM
+out.append('evm=' + str(hasattr(E, 'sendCoin')) + str(hasattr(E, 'fetchTokenBalance')) + str(len(E.networks()) > 30) + str(len(E.generateKey())))
+D = Lib.DateTime
+out.append('dt=' + str(len(D.utcnow())) + str(D.utcnow()['date'][:2]) + str(D.time() > 1))
+T = Lib.TON
+w = T.createWallet()
+out.append('ton=' + str(len(w['mnemonics'].split())) + str(len(w['address']) > 20))
+cs = T.connectSession(u, 600)
+out.append('tonc=' + str(sorted(cs.keys())) + T.verifySession(cs['session_id'])['status'])
+out.append('tonreg=' + str(T.register_ton_connect_wallet(cs['session_id'], 'bad')['ok']))
+x1 = Bot.scheduleCommand(3600, '/tbs', u, None, 'pp')
+x2 = Bot.scheduleCommand('/tbs', 3600)
+out.append('sch=' + str(x1.ok) + str(x1.id > 0) + str(Bot.cancelScheduledCommand(x1.id)) + str(Bot.resetScheduledCommands(user_id=u)['cleared'] >= 1))
+out.append('ids=' + str(len(Bot.randomID())) + str(len(Bot.uniqueID()) > 8) + str(Bot.cancelBroadcast()['ok']))
+cap = Bot.createCaptcha(u)
+out.append('cap=' + str(Bot.verifyCaptcha(u, 'WRONG')) + str(Bot.verifyCaptcha(u, cap.captcha_text)))
+RL = Lib.RefLib
+out.append('ref=' + RL.getLink(None, 'cmp').split('start=')[1] + str(RL.getRefCount()) + str(RL.getRank()) + str(sorted(RL.getStats().keys())[0]) + str(RL.track(on_touch_own_link=lambda: 1)))
+P = Lib.PIL
+im = P.addBorder(P.createGradient(40, 30, (255, 0, 0), (0, 0, 255), 'vertical'), 3, 'black')
+im = P.drawText(P.drawLine(P.drawCircle(P.drawRectangle(im, (1, 1, 9, 9), 'green', None, 1), (5, 5, 20, 20), 'white', None, 2), (0, 0, 10, 10), 'white', 1), 'hi', (3, 3), (255, 255, 255), 12)
+r_, g_, b_ = P.splitChannels(P.applyFilter(im, 'emboss'))
+im2 = P.addWatermark(P.mergeChannels(r_, g_, b_), P.createImage(5, 5, (1, 2, 3)), None, 0.5)
+im2 = P.invert(P.adjustSharpness(P.adjustColor(P.adjustContrast(P.adjustBrightness(P.flip(P.rotate(P.crop(P.resize(P.blend(im2, im, 0.5), 30), (0, 0, 20, 20)), 10, True), 'vertical'), 1.2), 1.1), 1.1), 1.3))
+by = P.toBytes(im2, 'PNG')
+out.append('pil=' + str(P.getSize(P.openFromBytes(by))) + str(by[1:4] == b'PNG'))
+C = Lib.CV
+cim = C.drawText(C.drawRectangle(C.createBlank(60, 40), (5, 5), (30, 30), (0, 0, 0), 2), 'a', (10, 20), (0, 0, 0), 1.0, 1)
+g_ = C.convertColor(cim, 'gray')
+th = C.threshold(g_, 127, 255, 'binary_inv')
+cs_ = C.findContours(th, 'external', 'simple')
+dr = C.drawContours(cim, cs_, (0, 255, 0), 2)
+pt = C.perspectiveTransform(C.blendImages(cim, dr, 0.5), [(0, 0), (59, 0), (59, 39), (0, 39)], [(0, 0), (50, 5), (59, 39), (0, 39)])
+cb = C.toBytes(C.rotate(C.resize(C.applyFilter(C.drawFaces(pt, C.detectFaces(pt)), 'sepia'), 30), 5), '.png')
+out.append('cv=' + str(len(cs_)) + str(C.readImage(cb).shape[1]) + str(C.adaptiveThreshold(g_).shape[0]) + str(C.detectEdges(g_).shape[1]) + str(C.morphOperations(th, 'dilate', 3).shape[0]))
+A = Lib.AI
+out.append('ai=' + str(hasattr(A.client('gemini', 'k'), 'chat')) + str(hasattr(A, 'Assistant')))
+try:
+    Bot.storeData('bigx', 'x' * 11000000)
+    big = 'stored'
+except ValueError:
+    big = 'refused'
+out.append('big=' + big + str('Bot' in dir()) + str('NO_SUCH_ENV' not in dir()))
+bot.sendMessage('TBS ' + ' '.join(out))

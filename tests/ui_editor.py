@@ -1,0 +1,40 @@
+import sys, time
+sys.path.insert(0, ".")
+from ui_lib import *
+N = int(time.time()) % 900000000 + 100000000
+BOT1 = f"{N}:" + "A" * 35
+requests.post("http://127.0.0.1:8081/_mock/add_bot", json={"token": BOT1, "username": f"t{N}_bot"})
+r = register(f"e{int(time.time())}@x.io", "Ed")
+tok = r["token"]
+bot = api("POST", "/bots", tok, json={"token": BOT1}).json()
+print("bot", bot.get("id"), bot.get("error"))
+api("PUT", f"/bots/{bot['id']}", tok, json={"commands": [{"id": "c1", "name": "/start", "code": "bot.sendMessage(chat_id=chat_id, text='hi')\n"}]})
+pw, b = browser()
+ctx = b.new_context(viewport={"width": 1366, "height": 860}); page = ctx.new_page()
+errs = []
+page.on("pageerror", lambda e: errs.append(str(e)))
+page.on("console", lambda m: errs.append("console:" + m.text) if m.type == "error" else None)
+page.add_init_script(f"localStorage.setItem('telebot_auth_token','{tok}');localStorage.setItem('telebot_user',JSON.stringify({json.dumps(r['user'])}));")
+page.goto(BASE); page.wait_for_timeout(2500)
+page.screenshot(path="/tmp/shots/01_home.png")
+page.get_by_text("My Bots").first.click(); page.wait_for_timeout(1200)
+page.screenshot(path="/tmp/shots/02_mybots.png")
+page.get_by_role("button", name="Edit").first.click(); page.wait_for_timeout(1500)
+page.screenshot(path="/tmp/shots/02b_studio.png")
+page.get_by_text("Commands", exact=True).first.click(); page.wait_for_timeout(800)
+page.screenshot(path="/tmp/shots/03_cmds.png")
+page.get_by_text("/start").first.click(); page.wait_for_timeout(1500)
+page.screenshot(path="/tmp/shots/04_editor.png")
+ed = page.locator(".ace_text-input").first
+print("ace inputs", page.locator(".ace_text-input").count(), page.locator(".ace_editor").count())
+page.wait_for_timeout(1000)
+print("ERRS-early", errs[:6]); page.screenshot(path="/tmp/shots/04b.png")
+page.locator(".ace_content").first.click(timeout=5000)
+page.keyboard.press("Control+End")
+page.keyboard.type("\nbot.sen", delay=120)
+page.wait_for_timeout(900)
+page.screenshot(path="/tmp/shots/05_typed.png")
+print("text:", page.evaluate("document.querySelector('.ace_editor') && window.ace ? 1 : 0"), page.locator(".ace_line").all_inner_texts()[:6])
+print("popup:", page.locator(".ace_autocomplete").count(), page.locator(".ace_autocomplete .ace_line").all_inner_texts()[:8] if page.locator(".ace_autocomplete").count() else "")
+print("ERRS", errs[:10])
+b.close(); pw.stop()

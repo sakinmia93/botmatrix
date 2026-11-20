@@ -1,0 +1,18 @@
+# Railway service config — https://docs.railway.app
+# Set secrets only in Railway Variables UI (never commit real tokens).
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 8
+# Optional: attach a volume mounted at /app/storage so SQLite + uploads survive redeploys
+
+[env]
+NODE_ENV = "production"
+API_PORT = "5001"
+# PORT is injected by Railway automatically
