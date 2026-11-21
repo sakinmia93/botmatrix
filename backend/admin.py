@@ -57,13 +57,30 @@ def get_config() -> List[dict]:
         rows = _stored(c)
     out = []
     for key, label, group, kind, restart, help_ in SCHEMA:
-        raw = rows.get(key, os.environ.get(key, ""))
+        stored = rows.get(key)
+        env = os.environ.get(key, "")
+        raw = stored if stored not in (None, "") else env
+        source = "stored" if stored not in (None, "") else ("env" if env else "")
         if kind == "secret" and raw:
             val = security.decrypt(raw) if str(raw).startswith("enc:") else raw
             display = security.mask_token(val) if val else ""
+            masked = display
         else:
-            display = raw
-        out.append({"key": key, "label": label, "group": group, "kind": kind, "restart": restart, "help": help_, "value": display, "hasValue": bool(raw)})
+            display = raw or ""
+            masked = display
+        out.append({
+            "key": key,
+            "label": label,
+            "group": group,
+            "kind": kind,
+            "restart": restart,
+            "help": help_,
+            "value": display,
+            "masked": masked,
+            "hasValue": bool(raw),
+            "set": bool(raw),
+            "source": source or "not set",
+        })
     return out
 
 
@@ -98,6 +115,9 @@ def overview() -> dict:
             "workingBots": one("SELECT COUNT(*) n FROM bots WHERE status='working'"),
             "newUsers7d": one("SELECT COUNT(*) n FROM users WHERE created_at >= ?", (appdb.iso_in(days=-7),)),
             "plans": {r["p"]: r["n"] for r in per},
+            "broadcasts": one("SELECT COUNT(*) n FROM broadcasts") if True else 0,
+            "activeBroadcasts": 0,
+            "openTickets": one("SELECT COUNT(*) n FROM support_tickets WHERE lower(COALESCE(status,'')) IN ('open','pending','')"),
         }
 
 
