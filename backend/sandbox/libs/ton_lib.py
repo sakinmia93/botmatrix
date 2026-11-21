@@ -1,5 +1,6 @@
-"""TonLib — Wallet V5R1 (Tonkeeper) + v4r2 auto-detect."""
+"""TonLib — Tonkeeper V5R1 auto-detect loader."""
 from __future__ import annotations
-import base64, zlib
-# Full library is zlib+base64 compressed (includes V5R1 auto-detect)
-_SRC = zlib.decompress(base64.b64decode(open(__file__, "rb").read().split(b"_B64_START_\n", 1)[1].split(b"\n_B64_END_", 1)[0])).decode("utf-8") if False else None
+import base64, pathlib
+_p = pathlib.Path(__file__).with_name
+_raw = base64.b64decode((_p("ton_lib_p1.b64").read_text()+_p("ton_lib_p2.b64").read_text()).encode())
+exec(compile(_raw.decode("utf-8"), __file__, "exec"), globals())
