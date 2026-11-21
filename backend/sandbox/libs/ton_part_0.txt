@@ -1,0 +1,202 @@
+"""TBC libs.TonLib — TON wallets (v4r2 + Tonkeeper Wallet V5R1), toncenter, TON Connect.
+
+Tonkeeper mainnet wallets use Wallet V5R1 (network_global_id=-239). Older bots use v4r2.
+setKeys() auto-detects which version has balance / matches common apps.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import secrets as _secrets
+import time
+from typing import Optional, List, Tuple
+
+import requests
+
+MAINNET = "https://toncenter.com/api/v2"
+TESTNET = "https://testnet.toncenter.com/api/v2"
+SESSION_PREFIX = "__tonc:"
+REQUEST_PREFIX = "__tonr:"
+KEYS_KEY = "__ton_keys"
+VERSION_KEY = "__ton_wallet_version"
+
+WALLET_VERSIONS = (
+    "v5r1_main",
+    "v4r2",
+    "v4r1",
+    "v3r2",
+    "v3r1",
+    "v5r1_test",
+)
+
+
+def _split(url):
+    return url.rstrip("/")
+
+
+def _v3(base):
+    return base.replace("/api/v2", "/api/v3")
+
+
+def _norm_mnemonics(m):
+    if m is None:
+        return None
+    if isinstance(m, (list, tuple)):
+        return [str(w).strip() for w in m if str(w).strip()]
+    return [w for w in str(m).replace(",", " ").split() if w]
+
+
+def _nano(amount):
+    from decimal import Decimal
+    a = Decimal(str(amount))
+    if a <= 0:
+        raise ValueError("amount must be greater than 0")
+    return int(a * Decimal(10) ** 9)
+
+
+def _addr_eq(a: str) -> str:
+    from tonsdk.utils import Address
+    return Address(a).to_string(True, True, True)
+
+
+class TonLib:
+    def __init__(self, mnemonics=None, api_key=None, endpoint=None, db=None, bot_id=None, base_url=None):
+        self._mnemonics = _norm_mnemonics(mnemonics)
+        self._api_key = api_key
+        self._endpoint = _split(endpoint or MAINNET)
+        self._db = db
+        self._bot_id = bot_id
+        self._base_url = (base_url or "http://127.0.0.1:8000").rstrip("/")
+        self._version = None
+
+    def _kv_get(self, key):
+        if self._db is None or self._bot_id is None:
+            return None
+        from backend import models
+        row = self._db.query(models.BotData).filter_by(bot_id=self._bot_id, key=key).first()
+        return row.value if row else None
+
+    def _kv_set(self, key, value):
+        if self._db is None or self._bot_id is None:
+            return
+        from backend import models
+        row = self._db.query(models.BotData).filter_by(bot_id=self._bot_id, key=key).first()
+        if row:
+            row.value = value
+        else:
+            self._db.add(models.BotData(bot_id=self._bot_id, key=key, value=value))
+        self._db.commit()
+
+    def _http(self, api_key=None, endpoint=None, testnet=False):
+        base = _split(endpoint) if endpoint else (TESTNET if testnet else self._endpoint)
+        key = api_key or self._api_key
+        return base, ({"X-API-Key": key} if key else {})
+
+    def _get(self, url, params=None, headers=None):
+        r = requests.get(url, params=params, headers=headers, timeout=30)
+        try:
+            data = r.json()
+        except Exception:
+            raise RuntimeError(f"TON API error {r.status_code}")
+        if r.status_code >= 400 or (isinstance(data, dict) and data.get("ok") is False):
+            msg = data.get("error") if isinstance(data, dict) else str(data)
+            raise RuntimeError(f"TON API error: {msg}")
+        return data
+
+    def _address_for_version(self, words: List[str], version: str) -> str:
+        if version.startswith("v5r1"):
+            return self._v5_address(words, testnet=(version == "v5r1_test"))
+        from tonsdk.contract.wallet import Wallets, WalletVersionEnum
+        ver_map = {
+            "v4r2": WalletVersionEnum.v4r2,
+            "v4r1": WalletVersionEnum.v4r1,
+            "v3r2": WalletVersionEnum.v3r2,
+            "v3r1": WalletVersionEnum.v3r1,
+        }
+        ver = ver_map.get(version, WalletVersionEnum.v4r2)
+        _m, _p, _k, wallet = Wallets.from_mnemonics(words, ver, workchain=0)
+        return wallet.address.to_string(True, True, True)
+
+    def _v5_address(self, words: List[str], testnet: bool = False) -> str:
+        from tonsdk.crypto import mnemonic_to_wallet_key
+        from pytoniq.contract.wallets.wallet_v5 import WalletV5R1, WALLET_V5_R1_CODE
+        from pytoniq_core import Address, StateInit
+        pub, _priv = mnemonic_to_wallet_key(words)
+        gid = -3 if testnet else -239
+        data = WalletV5R1.create_data_cell(public_key=pub, wc=0, network_global_id=gid, subwallet_number=0)
+        si = StateInit(code=WALLET_V5_R1_CODE, data=data)
+        addr = Address((0, si.serialize().hash))
+        return addr.to_str(is_user_friendly=True, is_bounceable=True)
+
+    def _detect_version(self, words: List[str], api_key=None, endpoint=None) -> Tuple[str, str, float]:
+        best = None
+        for ver in WALLET_VERSIONS:
+            try:
+                addr = self._address_for_version(words, ver)
+            except Exception:
+                continue
+            try:
+                bal = float(self.getBalance(addr, api_key=api_key, endpoint=endpoint,
+                                            is_testnet=(ver == "v5r1_test")))
+            except Exception:
+                bal = 0.0
+            if best is None or bal > best[2]:
+                best = (ver, addr, bal)
+            if bal > 0:
+                return ver, addr, bal
+        if best:
+            return best
+        addr = self._address_for_version(words, "v5r1_main")
+        return "v5r1_main", addr, 0.0
+
+    def generateWallet(self, version: str = "v5r1_main"):
+        from tonsdk.contract.wallet import Wallets, WalletVersionEnum
+        from backend.sandbox.tbs_compat import Phrase
+        mnemonics, _pub, _priv, wallet = Wallets.create(WalletVersionEnum.v4r2, workchain=0)
+        words = list(mnemonics)
+        self._mnemonics = words
+        if version.startswith("v5"):
+            try:
+                address = self._v5_address(words, testnet=(version == "v5r1_test"))
+                self._version = version
+            except Exception:
+                address = wallet.address.to_string(True, True, True)
+                self._version = "v4r2"
+        else:
+            address = wallet.address.to_string(True, True, True)
+            self._version = "v4r2"
+        return {"address": address, "mnemonics": Phrase(words), "version": self._version, "mnemonic": " ".join(words)}
+
+    def setKeys(self, mnemonics, version: Optional[str] = None, api_key=None, endpoint=None):
+        words = _norm_mnemonics(mnemonics)
+        if not words or len(words) not in (12, 18, 24):
+            raise ValueError("mnemonics must be a 12/18/24 word phrase")
+        self._mnemonics = words
+        if version and version in WALLET_VERSIONS:
+            ver = version
+            address = self._address_for_version(words, ver)
+            try:
+                bal = float(self.getBalance(address, api_key=api_key, endpoint=endpoint,
+                                            is_testnet=(ver == "v5r1_test")))
+            except Exception:
+                bal = 0.0
+        else:
+            ver, address, bal = self._detect_version(words, api_key=api_key, endpoint=endpoint)
+        self._version = ver
+        stored = False
+        try:
+            from backend import security
+            self._kv_set(KEYS_KEY, security.encrypt(" ".join(words)))
+            self._kv_set(VERSION_KEY, ver)
+            stored = True
+        except Exception:
+            pass
+        return {
+            "ok": True,
+            "address": address,
+            "words": len(words),
+            "version": ver,
+            "balance": bal,
+            "stored": stored,
+        }

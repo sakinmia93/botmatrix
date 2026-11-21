@@ -1,0 +1,90 @@
+
+    def _send_v5(self, words, from_addr, to_address, nano, comment, base, h, testnet=False):
+        from tonsdk.crypto import mnemonic_to_wallet_key
+        from pytoniq.contract.wallets.wallet_v5 import WalletV5R1, WalletV5WalletID
+        from pytoniq.contract.wallets.wallet import WalletMessage
+        from pytoniq.contract.contract import Contract
+        from pytoniq_core import Address, begin_cell, Builder, Cell
+        from pytoniq_core.crypto.signature import sign_message
+        import time as _time
+
+        pub, priv = mnemonic_to_wallet_key(words)
+        sign_key = priv if len(priv) == 64 else priv
+
+        seqno = self._seqno(from_addr, base, h)
+        gid = -3 if testnet else -239
+        wallet_id = WalletV5WalletID(workchain=0, subwallet_number=0, network_global_id=gid).pack()
+
+        body = Cell.empty()
+        if comment:
+            body = begin_cell().store_uint(0, 32).store_snake_string(str(comment)).end_cell()
+
+        dest = Address(to_address)
+        internal = Contract.create_internal_msg(dest=dest, value=nano, body=body)
+        msg = WalletMessage(send_mode=3, message=internal)
+
+        op_code = 0x7369676e
+        signing_message = begin_cell().store_uint(op_code, 32)
+        signing_message.store_uint(wallet_id, 32)
+        if seqno == 0:
+            signing_message.store_uint(2**32 - 1, 32)
+        else:
+            signing_message.store_uint(int(_time.time()) + 60, 32)
+        signing_message.store_uint(seqno, 32)
+        signing_message.store_cell(WalletV5R1.pack_actions([msg]))
+        signing_message = signing_message.end_cell()
+        signature = sign_message(signing_message.hash, sign_key)
+        body_cell = Builder().store_cell(signing_message).store_bytes(signature).end_cell()
+
+        ext = Contract.create_external_msg(dest=Address(from_addr), body=body_cell)
+        boc = base64.b64encode(ext.serialize().to_boc()).decode()
+        return boc, seqno
+
+    def checkTONTransaction(self, address, api_key=None, endpoint=None, limit=10, is_testnet=False):
+        base, h = self._http(api_key, endpoint, is_testnet)
+        data = self._get(f"{base}/getTransactions", {"address": address, "limit": int(limit)}, h)
+        out = []
+        for tx in data.get("result") or []:
+            inm = tx.get("in_msg") or {}
+            outm = (tx.get("out_msgs") or [{}])[0] if tx.get("out_msgs") else {}
+            amount = int(inm.get("value") or 0) / 1e9
+            if amount > 0:
+                out.append({
+                    "type": "incoming",
+                    "from": inm.get("source"),
+                    "to": address,
+                    "amount": amount,
+                    "comment": inm.get("message"),
+                    "hash": tx.get("transaction_id", {}).get("hash"),
+                    "time": tx.get("utime"),
+                })
+            for om in (tx.get("out_msgs") or []):
+                amt = int(om.get("value") or 0) / 1e9
+                if amt > 0:
+                    out.append({
+                        "type": "outgoing",
+                        "from": address,
+                        "to": om.get("destination"),
+                        "amount": amt,
+                        "comment": om.get("message"),
+                        "hash": tx.get("transaction_id", {}).get("hash"),
+                        "time": tx.get("utime"),
+                    })
+        return out
+
+    # TON Connect stubs (compatible shapes)
+    def create_ton_connect_session(self, *a, **kw):
+        sid = _secrets.token_hex(16)
+        return {"session_id": sid, "connect_url": f"https://app.tonkeeper.com/ton-connect?v=2&id={sid}"}
+
+    def verify_ton_connect_session(self, session_id, *a, **kw):
+        return {"status": "pending", "wallet_address": None}
+
+    def register_ton_connect_wallet(self, session_id, wallet_address):
+        return {"status": "success", "message": "registered", "wallet_address": wallet_address}
+
+    def getAddress(self, mnemonics=None):
+        return self.getWalletAddress(mnemonics)
+
+    def storeKey(self, mnemonics):
+        return self.setKeys(mnemonics)

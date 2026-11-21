@@ -1,0 +1,105 @@
+
+    def _keys(self, mnemonics=None):
+        m = _norm_mnemonics(mnemonics) or self._mnemonics
+        if not m:
+            stored = self._kv_get(KEYS_KEY)
+            if stored:
+                from backend import security
+                m = _norm_mnemonics(security.decrypt(stored))
+        if not m:
+            raise ValueError("No mnemonics: call libs.TonLib.setKeys(...) or pass mnemonics=")
+        return m
+
+    def _resolved_version(self) -> str:
+        if self._version:
+            return self._version
+        stored = self._kv_get(VERSION_KEY)
+        if stored:
+            self._version = stored
+            return stored
+        return "v5r1_main"
+
+    def getWalletAddress(self, mnemonics=None, version=None):
+        words = self._keys(mnemonics)
+        ver = version or self._resolved_version()
+        return self._address_for_version(words, ver)
+
+    def getBalance(self, address, api_key=None, endpoint=None, is_testnet=False):
+        base, h = self._http(api_key, endpoint, is_testnet)
+        data = self._get(f"{base}/getAddressBalance", {"address": address}, h)
+        return int(data.get("result") or 0) / 1e9
+
+    def sendTON(self, to_address, amount, comment=None, mnemonics=None, api_key=None, endpoint=None, is_testnet=False, version=None):
+        words = self._keys(mnemonics)
+        ver = version or self._resolved_version()
+        if ver not in WALLET_VERSIONS or (self._version is None and version is None):
+            ver, from_addr, _bal = self._detect_version(words, api_key=api_key, endpoint=endpoint)
+            self._version = ver
+            try:
+                self._kv_set(VERSION_KEY, ver)
+            except Exception:
+                pass
+        else:
+            from_addr = self._address_for_version(words, ver)
+
+        nano = _nano(amount)
+        fee_reserve = 10_000_000
+        base, h = self._http(api_key, endpoint, is_testnet)
+        bal_data = self._get(f"{base}/getAddressBalance", {"address": from_addr}, h)
+        bal = int(bal_data.get("result") or 0)
+        need = nano + fee_reserve
+        if bal < need:
+            raise ValueError(
+                f"insufficient balance: have {bal / 1e9:.9f} TON, need {need / 1e9:.9f} TON "
+                f"(amount={float(amount)} + fee_reserve≈0.01) from={from_addr}"
+            )
+
+        if ver.startswith("v5r1"):
+            boc, seqno = self._send_v5(words, from_addr, to_address, nano, comment, base, h,
+                                       testnet=(ver == "v5r1_test"))
+        else:
+            boc, seqno = self._send_v4(words, from_addr, to_address, nano, comment, base, h, ver)
+
+        r = requests.post(f"{base}/sendBoc", json={"boc": boc}, headers=h, timeout=30).json()
+        if not r.get("ok"):
+            raise RuntimeError(f"TON send failed: {r.get('error') or r}")
+        return {
+            "ok": True,
+            "hash": (r.get("result") or {}).get("hash"),
+            "from": from_addr,
+            "to": to_address,
+            "amount": float(amount),
+            "comment": comment,
+            "seqno": seqno,
+            "balance_before": bal / 1e9,
+            "version": ver,
+        }
+
+    def _seqno(self, addr, base, h):
+        try:
+            r = requests.post(
+                f"{base}/runGetMethod",
+                json={"address": addr, "method": "seqno", "stack": []},
+                headers=h, timeout=30,
+            ).json()
+            if r.get("ok") and r.get("result", {}).get("exit_code") == 0:
+                stack0 = r["result"]["stack"][0][1]
+                return int(stack0, 16) if isinstance(stack0, str) else int(stack0)
+        except Exception:
+            pass
+        return 0
+
+    def _send_v4(self, words, from_addr, to_address, nano, comment, base, h, version="v4r2"):
+        from tonsdk.contract.wallet import Wallets, WalletVersionEnum
+        ver_map = {
+            "v4r2": WalletVersionEnum.v4r2,
+            "v4r1": WalletVersionEnum.v4r1,
+            "v3r2": WalletVersionEnum.v3r2,
+            "v3r1": WalletVersionEnum.v3r1,
+        }
+        ver = ver_map.get(version, WalletVersionEnum.v4r2)
+        _m, _p, _k, wallet = Wallets.from_mnemonics(words, ver, workchain=0)
+        seqno = self._seqno(from_addr, base, h)
+        q = wallet.create_transfer_message(to_address, nano, seqno, payload=(str(comment) if comment else None))
+        boc = base64.b64encode(q["message"].to_boc(False)).decode()
+        return boc, seqno
