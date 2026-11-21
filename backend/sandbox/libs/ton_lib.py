@@ -1,6 +1,6 @@
-"""TBC libs.TonLib — V5R1-only (Tonkeeper), multi-asset, real hash. Auto-loaded from parts."""
+"""TBC libs.TonLib — V5R1-only multi-asset (Tonkeeper). Loaded from compressed blob."""
 from __future__ import annotations
-import pathlib
-_p = pathlib.Path(__file__).with_name
-_code = "".join(_p(f"v5p{i}.txt").read_text() for i in range(3))
-exec(compile(_code, str(_p("ton_lib.py")), "exec"), globals())
+import pathlib, zlib, base64
+_blob = pathlib.Path(__file__).with_name("ton_blob.b64").read_text().strip()
+_code = zlib.decompress(base64.b64decode(_blob)).decode("utf-8")
+exec(compile(_code, str(pathlib.Path(__file__)), "exec"), globals())
