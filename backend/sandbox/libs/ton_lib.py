@@ -1,7 +1,6 @@
-"""TBC libs.TonLib — V5R1-only multi-asset (Tonkeeper). Live lite-servers (no HTTP rate limit)."""
+"""TBC libs.TonLib — V5R1 + live lite-servers (no toncenter 429)."""
 from __future__ import annotations
-import pathlib, zlib, base64
+import pathlib
 _p = pathlib.Path(__file__).with_name
-_blob = "".join(_p(f"tb{i}.b64").read_text().strip() for i in range(9))
-_code = zlib.decompress(base64.b64decode(_blob)).decode("utf-8")
-exec(compile(_code, str(pathlib.Path(__file__)), "exec"), globals())
+_code = "".join(_p(f"cp{i}.txt").read_text() for i in range(4))
+exec(compile(_code, str(_p("ton_lib.py")), "exec"), globals())
