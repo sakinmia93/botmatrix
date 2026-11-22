@@ -72,7 +72,8 @@ async function startServer() {
     res.status(200).json({ ok: true, service: 'bot-matrix' });
   });
 
-  app.use(['/api', '/v2'], (req, res) => {
+  // Proxy API + TON Connect pages to Python backend (must be before SPA catch-all)
+  app.use(['/api', '/v2', '/tonconnect'], (req, res) => {
     const proxyOptions: http.RequestOptions = {
       hostname: '127.0.0.1',
       port: PYTHON_PORT,
