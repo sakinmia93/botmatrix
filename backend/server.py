@@ -68,80 +68,84 @@ if _old not in _code:
 _code = _code.replace(_old, _new)
 
 _code = _code.replace(
-    '    if kind == "session" and rec["expires"] < time.time():\n        raise ApiError("This session has expired.", 410)',
-    '    exp = rec.get("expires") if rec.get("expires") is not None else rec.get("exp")\n'
-    '    if kind == "session" and exp is not None and float(exp) < time.time():\n'
-    '        raise ApiError("This session has expired.", 410)',
+    "    if kind == \"session\" and rec[\"expires\"] < time.time():\n        raise ApiError(\"This session has expired.\", 410)",
+    "    exp = rec.get(\"expires\") if rec.get(\"expires\") is not None else rec.get(\"exp\")\n"
+    "    if kind == \"session\" and exp is not None and float(exp) < time.time():\n"
+    "        raise ApiError(\"This session has expired.\", 410)",
 )
 _code = _code.replace(
-    'def _tc_load(db, em, key):\n'
-    '    row = db.query(em.BotData).filter(em.BotData.key == key).first()\n'
-    '    return row, (json.loads(row.value) if row else None)',
-    'def _tc_load(db, em, key):\n'
-    '    row = db.query(em.BotData).filter(em.BotData.key == key).first()\n'
-    '    if not row:\n'
-    '        return None, None\n'
-    '    try:\n'
-    '        return row, json.loads(row.value or "{}")\n'
-    '    except Exception:\n'
-    '        return row, None',
+    "def _tc_load(db, em, key):\n"
+    "    row = db.query(em.BotData).filter(em.BotData.key == key).first()\n"
+    "    return row, (json.loads(row.value) if row else None)",
+    "def _tc_load(db, em, key):\n"
+    "    row = db.query(em.BotData).filter(em.BotData.key == key).first()\n"
+    "    if not row:\n"
+    "        return None, None\n"
+    "    try:\n"
+    "        return row, json.loads(row.value or \"{}\")\n"
+    "    except Exception:\n"
+    "        return row, None",
 )
 _code = _code.replace(
     '    return {"challenge": rec.get("challenge") or ident, "return_url": rec.get("return_url", "")}',
-    '    return {"challenge": rec.get("challenge") or ident, "return_url": rec.get("return_url") or "",'
-    ' "bot_link": rec.get("bot_link") or "https://t.me/BMPReferBot",'
-    ' "bot_username": rec.get("bot_username") or "BMPReferBot",'
-    ' "already_connected": bool(rec.get("wallet_address") or rec.get("wallet")),'
-    ' "address": rec.get("wallet_address") or rec.get("wallet") or "",'
-    ' "public_key": rec.get("public_key") or "", "status": rec.get("status") or "pending",'
-    ' "chain": rec.get("chain") or "mainnet"}',
+    '    return {"challenge": rec.get("challenge") or ident, "return_url": rec.get("return_url") or "", "bot_link": rec.get("bot_link") or "https://t.me/BMPReferBot", "bot_username": rec.get("bot_username") or "BMPReferBot", "already_connected": bool(rec.get("wallet_address") or rec.get("wallet")), "address": rec.get("wallet_address") or rec.get("wallet") or "", "public_key": rec.get("public_key") or "", "status": rec.get("status") or "pending", "chain": rec.get("chain") or "mainnet"}',
 )
 
-# Disconnect endpoint (before request/build)
+# exact line from base file
 _inj = '@route("GET", r"/api/ton-connect/(request)/([A-Za-z0-9_\\-]{10,64})/build", auth=False)'
+# After Python parses this source, _inj must equal the base line. In base the chars are backslash-hyphen.
+# In this file string: \\ -> \ so we get \-  Correct.
+
 _disc = (
-    '\n@route("POST", r"/api/ton-connect/(session)/([A-Za-z0-9_\\-]{10,64})/disconnect", auth=False)\n'
-    'def _tc_disconnect(x: Ctx):\n'
-    '    kind, ident = x.p(0), x.p(1)\n'
-    '    db, em, row, rec = _tc_row("session", ident)\n'
-    '    try:\n'
-    '        if not rec:\n'
-    '            return {"ok": True, "status": "pending"}\n'
-    '        uid = rec.get("user_id")\n'
-    '        rec["status"] = "pending"\n'
-    '        rec.pop("wallet_address", None)\n'
-    '        rec.pop("public_key", None)\n'
-    '        rec.pop("connected_at", None)\n'
-    '        if row:\n'
-    '            row.value = json.dumps(rec)\n'
-    '        if uid is not None and row is not None:\n'
-    '            try:\n'
-    '                ukey = "__tonc_user:%s" % uid\n'
-    '                urow = db.query(em.BotData).filter(em.BotData.key == ukey, em.BotData.bot_id == row.bot_id).first()\n'
-    '                if urow:\n'
-    '                    urow.value = json.dumps({"status": "pending", "wallet_address": None, "session_id": ident})\n'
-    '            except Exception:\n'
-    '                pass\n'
-    '        db.commit()\n'
-    '        return {"ok": True, "status": "pending"}\n'
-    '    finally:\n'
-    '        db.close()\n\n'
+    "\n@route(\"POST\", r\"/api/ton-connect/(session)/([A-Za-z0-9_\\-]{10,64})/disconnect\", auth=False)\n"
+    "def _tc_disconnect(x: Ctx):\n"
+    "    kind, ident = x.p(0), x.p(1)\n"
+    "    db, em, row, rec = _tc_row(\"session\", ident)\n"
+    "    try:\n"
+    "        if not rec:\n"
+    "            return {\"ok\": True, \"status\": \"pending\"}\n"
+    "        uid = rec.get(\"user_id\")\n"
+    "        rec[\"status\"] = \"pending\"\n"
+    "        rec.pop(\"wallet_address\", None)\n"
+    "        rec.pop(\"public_key\", None)\n"
+    "        rec.pop(\"connected_at\", None)\n"
+    "        if row:\n"
+    "            row.value = json.dumps(rec)\n"
+    "        if uid is not None and row is not None:\n"
+    "            try:\n"
+    "                ukey = \"__tonc_user:%s\" % uid\n"
+    "                urow = db.query(em.BotData).filter(em.BotData.key == ukey, em.BotData.bot_id == row.bot_id).first()\n"
+    "                if urow:\n"
+    "                    urow.value = json.dumps({\"status\": \"pending\", \"wallet_address\": None, \"session_id\": ident})\n"
+    "            except Exception:\n"
+    "                pass\n"
+    "        db.commit()\n"
+    "        return {\"ok\": True, \"status\": \"pending\"}\n"
+    "    finally:\n"
+    "        db.close()\n\n"
 )
 if _inj in _code and "_tc_disconnect" not in _code:
     _code = _code.replace(_inj, _disc + _inj, 1)
+elif _inj not in _code:
+    # try alternate escaping
+    for cand in [
+        '@route("GET", r"/api/ton-connect/(request)/([A-Za-z0-9_\\-]{10,64})/build", auth=False)',
+        '@route("GET", r"/api/ton-connect/(request)/([A-Za-z0-9_\-]{10,64})/build", auth=False)',
+    ]:
+        if cand in _code and "_tc_disconnect" not in _code:
+            _code = _code.replace(cand, _disc + cand, 1)
+            break
 
-# Disconnect when TonConnect UI clears wallet (must keep valid f-string braces)
 _code = _code.replace(
-    "ui.onStatusChange(async w=>{{\n    if(!w)return;",
-    "ui.onStatusChange(async w=>{{\n    if(!w){{try{{fetch(API+'session/'+ID+'/disconnect',{{method:'POST',headers:{{'content-type':'application/json'}},body:'{{}}'}});}}catch(e){{}}st('');return}}",
+    "    if(!w)return;",
+    "    if(!w){{try{{fetch(API+'session/'+ID+'/disconnect',{{method:'POST',headers:{{'content-type':'application/json'}},body:'{{}}'}});}}catch(e){{}}return}}",
 )
 
-# Clean Success + Back only (no public instructional text)
 _code = _code.replace(
     "if(KIND==='session'){{st('Wallet connected. You can return to Telegram.');return}}",
     "if(KIND==='session'){{"
     "var _a=r.address||(w&&w.account&&w.account.address)||'';"
-    "var _b=(r.bot_link)||'https://t.me/BMPReferBot';"
+    "var _b=r.bot_link||'https://t.me/BMPReferBot';"
     "document.querySelector('main').innerHTML='<div style=\"text-align:center;padding:8px\">"
     "<div style=\"width:56px;height:56px;border-radius:50%;margin:8px auto 14px;background:#22c55e;display:flex;align-items:center;justify-content:center;font-size:28px\">&#10003;</div>"
     "<h1 style=\"margin:0 0 10px\">Success</h1>"
