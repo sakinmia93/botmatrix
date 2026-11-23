@@ -1,4 +1,4 @@
-"""BOT MATRIX API server — stable bootstrap (compilable)."""
+"""BOT MATRIX API server — TON Connect success/disconnect (compilable)."""
 from __future__ import annotations
 import urllib.request
 
@@ -61,10 +61,10 @@ _new = (
     "            rec[\"connected_at\"] = int(time.time())\n"
     "        row.value = json.dumps(rec)\n"
     "        db.commit()\n"
-    "        return {\"ok\": True, \"address\": addr, \"status\": \"connected\"}"
+    "        return {\"ok\": True, \"address\": addr, \"status\": \"connected\", \"bot_link\": rec.get(\"bot_link\") or \"https://t.me/BMPReferBot\", \"bot_username\": rec.get(\"bot_username\") or \"BMPReferBot\"}"
 )
 if _old not in _code:
-    raise RuntimeError("connected block missing in base")
+    raise RuntimeError("connected block missing")
 _code = _code.replace(_old, _new)
 
 _code = _code.replace(
@@ -89,7 +89,7 @@ _code = _code.replace(
 _code = _code.replace(
     '    return {"challenge": rec.get("challenge") or ident, "return_url": rec.get("return_url", "")}',
     '    return {"challenge": rec.get("challenge") or ident, "return_url": rec.get("return_url") or "",'
-    ' "bot_link": rec.get("bot_link") or "https://t.me/BMPReferBot?start=wallet_ok",'
+    ' "bot_link": rec.get("bot_link") or "https://t.me/BMPReferBot",'
     ' "bot_username": rec.get("bot_username") or "BMPReferBot",'
     ' "already_connected": bool(rec.get("wallet_address") or rec.get("wallet")),'
     ' "address": rec.get("wallet_address") or rec.get("wallet") or "",'
@@ -97,10 +97,58 @@ _code = _code.replace(
     ' "chain": rec.get("chain") or "mainnet"}',
 )
 
-# Only simple status text change (valid inside f-string {{ }})
+# Disconnect endpoint (before request/build)
+_inj = '@route("GET", r"/api/ton-connect/(request)/([A-Za-z0-9_\\-]{10,64})/build", auth=False)'
+_disc = (
+    '\n@route("POST", r"/api/ton-connect/(session)/([A-Za-z0-9_\\-]{10,64})/disconnect", auth=False)\n'
+    'def _tc_disconnect(x: Ctx):\n'
+    '    kind, ident = x.p(0), x.p(1)\n'
+    '    db, em, row, rec = _tc_row("session", ident)\n'
+    '    try:\n'
+    '        if not rec:\n'
+    '            return {"ok": True, "status": "pending"}\n'
+    '        uid = rec.get("user_id")\n'
+    '        rec["status"] = "pending"\n'
+    '        rec.pop("wallet_address", None)\n'
+    '        rec.pop("public_key", None)\n'
+    '        rec.pop("connected_at", None)\n'
+    '        if row:\n'
+    '            row.value = json.dumps(rec)\n'
+    '        if uid is not None and row is not None:\n'
+    '            try:\n'
+    '                ukey = "__tonc_user:%s" % uid\n'
+    '                urow = db.query(em.BotData).filter(em.BotData.key == ukey, em.BotData.bot_id == row.bot_id).first()\n'
+    '                if urow:\n'
+    '                    urow.value = json.dumps({"status": "pending", "wallet_address": None, "session_id": ident})\n'
+    '            except Exception:\n'
+    '                pass\n'
+    '        db.commit()\n'
+    '        return {"ok": True, "status": "pending"}\n'
+    '    finally:\n'
+    '        db.close()\n\n'
+)
+if _inj in _code and "_tc_disconnect" not in _code:
+    _code = _code.replace(_inj, _disc + _inj, 1)
+
+# Disconnect when TonConnect UI clears wallet (must keep valid f-string braces)
 _code = _code.replace(
-    "st('Wallet connected. You can return to Telegram.')",
-    "st('Wallet connected. Open Telegram and run /checkwallet.')",
+    "ui.onStatusChange(async w=>{{\n    if(!w)return;",
+    "ui.onStatusChange(async w=>{{\n    if(!w){{try{{fetch(API+'session/'+ID+'/disconnect',{{method:'POST',headers:{{'content-type':'application/json'}},body:'{{}}'}});}}catch(e){{}}st('');return}}",
+)
+
+# Clean Success + Back only (no public instructional text)
+_code = _code.replace(
+    "if(KIND==='session'){{st('Wallet connected. You can return to Telegram.');return}}",
+    "if(KIND==='session'){{"
+    "var _a=r.address||(w&&w.account&&w.account.address)||'';"
+    "var _b=(r.bot_link)||'https://t.me/BMPReferBot';"
+    "document.querySelector('main').innerHTML='<div style=\"text-align:center;padding:8px\">"
+    "<div style=\"width:56px;height:56px;border-radius:50%;margin:8px auto 14px;background:#22c55e;display:flex;align-items:center;justify-content:center;font-size:28px\">&#10003;</div>"
+    "<h1 style=\"margin:0 0 10px\">Success</h1>"
+    "<p style=\"word-break:break-all;font-weight:600;color:#e8e8ea;font-size:13px;margin:0 0 16px\">'+_a+'</p>"
+    "<a href=\"'+_b+'\" style=\"display:inline-block;padding:12px 22px;border-radius:10px;background:#2f6bff;color:#fff;text-decoration:none;font-weight:700\">Back</a>"
+    "</div>';"
+    "return}}"
 )
 
 compile(_code, "backend/server.py", "exec")
