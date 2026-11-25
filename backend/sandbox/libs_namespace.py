@@ -17,7 +17,6 @@ from backend.sandbox.libs.menu_lib import MenuLib
 from backend.sandbox.libs.logger_lib import LoggerLib
 from backend.sandbox.libs.stats_lib import StatsLib
 from backend.sandbox.libs.reflib_lib import RefLib
-# image_lib imported lazily in __init__ (cv2/numpy are heavy)
 from backend.sandbox.libs.request_lib import RequestModule
 from backend.sandbox.libs.premium_gift_lib import PremiumGiftLib
 from backend.sandbox.libs.keyboard_lib import KeyboardLib
@@ -120,7 +119,6 @@ class LibsNamespace:
         self.QR = QRLib()
         self.Validator = ValidatorLib()
 
-        # Blockchain / crypto / payments (TBC parity)
         _web3 = Web3Lib(secrets.get("web3_private_key"))
         self.web3lib = _web3
         self.Web3 = _web3
@@ -136,6 +134,33 @@ class LibsNamespace:
         self.ton = _ton
         self.TON = _ton
         self.EVM = self.web3lib
+
+        # Telegram user client (MTProto) + mass-mention
+        try:
+            from backend.sandbox.libs.telegram_session_lib import TelegramSession
+            _tg_sess = TelegramSession(db=db, bot_id=bot_id, base_url=BASE_URL)
+            self.TelegramSession = _tg_sess
+            self.telegram_session = _tg_sess
+            self.TgSession = _tg_sess
+        except Exception as _tg_err:
+            class _TgStub:
+                def __getattr__(self, n):
+                    raise RuntimeError(
+                        "TelegramSession unavailable. Run: cd backend/sandbox/libs && python expand_tg_sess.py; pip install telethon. "
+                        + str(_tg_err)
+                    )
+            self.TelegramSession = self.telegram_session = self.TgSession = _TgStub()
+
+        try:
+            from backend.sandbox.libs.mention_lib import MentionLib
+            _mention = MentionLib(db=db, bot_id=bot_id, bot_token=_tok)
+            self.Mention = _mention
+            self.mention = _mention
+        except Exception as _m_err:
+            class _MStub:
+                def __getattr__(self, n):
+                    raise RuntimeError("Mention lib unavailable: " + str(_m_err))
+            self.Mention = self.mention = _MStub()
 
         class _NetWeb3:
             def __init__(self, w3, network):
