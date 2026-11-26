@@ -135,10 +135,10 @@ class LibsNamespace:
         self.TON = _ton
         self.EVM = self.web3lib
 
-        # Telegram user client (MTProto) + mass-mention
+        # Telegram user client (MTProto) — always set attribute (never AttributeError)
         try:
-            from backend.sandbox.libs.telegram_session_lib import TelegramSession
-            _tg_sess = TelegramSession(db=db, bot_id=bot_id, base_url=BASE_URL)
+            from backend.sandbox.libs.telegram_session_lib import TelegramSession as _TS
+            _tg_sess = _TS(db=db, bot_id=bot_id, base_url=BASE_URL)
             self.TelegramSession = _tg_sess
             self.telegram_session = _tg_sess
             self.TgSession = _tg_sess
@@ -146,14 +146,14 @@ class LibsNamespace:
             class _TgStub:
                 def __getattr__(self, n):
                     raise RuntimeError(
-                        "TelegramSession unavailable. Run: cd backend/sandbox/libs && python expand_tg_sess.py; pip install telethon. "
+                        "TelegramSession unavailable (install telethon / deploy telegram_session_lib.py). "
                         + str(_tg_err)
                     )
             self.TelegramSession = self.telegram_session = self.TgSession = _TgStub()
 
         try:
-            from backend.sandbox.libs.mention_lib import MentionLib
-            _mention = MentionLib(db=db, bot_id=bot_id, bot_token=_tok)
+            from backend.sandbox.libs.mention_lib import MentionLib as _ML
+            _mention = _ML(db=db, bot_id=bot_id, bot_token=_tok)
             self.Mention = _mention
             self.mention = _mention
         except Exception as _m_err:
