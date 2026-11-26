@@ -1,4 +1,4 @@
-"""libs.TelegramSession — expands tg_sess_*.b64 on first import."""
+"""libs.TelegramSession — expands tg_sess_*.b64 or tg_part_*.b64 on first import."""
 from __future__ import annotations
 from pathlib import Path
 import base64, importlib.util, sys
@@ -12,7 +12,11 @@ def _load():
     else:
         parts = sorted(_here.glob("tg_sess_*.b64"), key=lambda p: int(p.stem.split("_")[-1]))
         if not parts:
-            raise ImportError("tg_sess_*.b64 missing next to telegram_session_lib.py")
+            parts = sorted(_here.glob("tg_part_*.b64"), key=lambda p: int(p.stem.split("_")[1]))
+        if not parts:
+            raise ImportError(
+                "tg_sess_*.b64 / tg_part_*.b64 missing next to telegram_session_lib.py"
+            )
         data = b"".join(base64.b64decode(p.read_text().strip()) for p in parts)
         _full.write_bytes(data)
         path = _full
