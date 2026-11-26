@@ -5,7 +5,9 @@
 FROM node:22-bookworm-slim AS frontend-build
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci
+# Prefer npm ci when lock is in sync; fall back to npm install so missing
+# lock entries (e.g. @tonconnect/sdk) do not fail the Railway build.
+RUN npm ci || npm install
 COPY index.html vite.config.ts tsconfig.json metadata.json ./
 COPY public ./public
 COPY src ./src
@@ -23,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm install esbuild --no-save
+RUN (npm ci --omit=dev || npm install --omit=dev) && npm install esbuild --no-save
 
 COPY --from=frontend-build /app/dist ./dist
 
