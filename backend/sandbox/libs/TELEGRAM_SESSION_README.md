@@ -1,10 +1,24 @@
-# TelegramSession
+# libs.TelegramSession
 
-Shards: `tg_sess_*.b64`. Expand: `python expand_tg_sess.py`
+MTProto user-client (Telethon) for BotMatrix sandbox.
 
-Or import `telegram_session_lib` (auto-expands from shards).
+## Deploy note
+On import, `telegram_session_lib.py` expands `tg_gz_0.b64` … `tg_gz_9.b64` (gzip+base64) into `_telegram_session_full.py`.
+Requires server package: `telethon`.
 
-Requires: `pip install telethon`
+## Auth
+- create / sendCode / verifyCode / verifyPassword
+- getStatus / listSessions / disconnect / logout / delete
 
-Stars/Gifts: getStarsBalance, getStarGifts, sendGift (gift.py parity).
-Mention: libs.Mention.everyone / admins.
+## Business management
+- listSessions(status, country_code, tag)
+- listByCountry / listByStatus / stats
+- setTags / setNotes / setName / getByPhone
+- checkAccount (health: good | normal | restricted | bad)
+- detectCountry / validateApi
+- addTrace / getTrace / clearTrace
+
+## Features
+messages, media, chats, admin, contacts, profile, Stars/Gifts, reactions, search, call()
+
+Session strings are encrypted at rest. Only opaque `session_id` is returned to bot code.
