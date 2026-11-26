@@ -1,26 +1,30 @@
-"""TBC libs.TelegramSession — expands tg_gz_*.b64 (gzip) on import."""
+"""libs.TelegramSession — expands tg_sess_*.b64 on first import."""
 from __future__ import annotations
 from pathlib import Path
-import base64, gzip, sys, importlib.util
+import base64, importlib.util, sys
+
 _here = Path(__file__).resolve().parent
-def _ensure_full():
-    full = _here / "_telegram_session_full.py"
-    parts = sorted(_here.glob("tg_gz_*.b64"), key=lambda p: p.name)
-    if not parts:
-        old = sorted(_here.glob("tg_part_*.b64"), key=lambda p: int(p.stem.split("_")[1]))
-        if not old:
-            raise ImportError("tg_gz_*.b64 / tg_part_*.b64 missing")
-        data = b"".join(base64.b64decode(p.read_text().strip()) for p in old)
+_full = _here / "_telegram_session_full.py"
+
+def _load():
+    if _full.exists() and _full.stat().st_size > 10000:
+        path = _full
     else:
-        data = gzip.decompress(b"".join(base64.b64decode(p.read_text().strip()) for p in parts))
-    if (not full.exists()) or full.stat().st_size != len(data):
-        full.write_bytes(data)
-    return full
-_full = _ensure_full()
-_spec = importlib.util.spec_from_file_location("backend.sandbox.libs._telegram_session_full", _full)
-_mod = importlib.util.module_from_spec(_spec)
-sys.modules[_spec.name] = _mod
-_spec.loader.exec_module(_mod)
+        parts = sorted(_here.glob("tg_sess_*.b64"), key=lambda p: int(p.stem.split("_")[-1]))
+        if not parts:
+            raise ImportError("tg_sess_*.b64 missing next to telegram_session_lib.py")
+        data = b"".join(base64.b64decode(p.read_text().strip()) for p in parts)
+        _full.write_bytes(data)
+        path = _full
+    spec = importlib.util.spec_from_file_location(
+        "backend.sandbox.libs._telegram_session_full", path
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+_mod = _load()
 TelegramSession = _mod.TelegramSession
 TelegramSessionLib = getattr(_mod, "TelegramSessionLib", TelegramSession)
 for _n in dir(_mod):
