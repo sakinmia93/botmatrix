@@ -59,44 +59,6 @@ def _bootstrap():
     if needle in src and "# --- botmatrix guards ---" not in src:
         src = src.replace(needle, _PRE_SANDBOX_GUARD + "\n        " + needle, 1)
 
-    # Soften empty/unquoted .env (API_HASH hex without quotes, empty values)
-    if "def _sanitize_env_source" not in src and "def _load_env_vars" in src:
-        patch = '''
-def _sanitize_env_source(src: str) -> str:
-    import re as _re
-    out = []
-    for line in (src or "").splitlines():
-        raw = line.rstrip()
-        s = raw.strip()
-        if not s or s.startswith("#"):
-            continue
-        m = _re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*)$", s)
-        if not m:
-            out.append(raw)
-            continue
-        key, val = m.group(1), m.group(2).strip()
-        if val == "":
-            out.append(f"{key} = None")
-            continue
-        if val[0] in ("'\"", '"') or val in ("None", "True", "False") or val[0] in "([{":
-            out.append(f"{key} = {val}")
-            continue
-        if _re.fullmatch(r"-?\\d+(\\.\\d+)?([eE][+-]?\\d+)?", val):
-            out.append(f"{key} = {val}")
-            continue
-        out.append(f'{key} = "{val}"')
-    return "\\n".join(out)
-
-'''
-        src = src.replace("def _load_env_vars", patch + "def _load_env_vars", 1)
-        # call sanitize inside load if not present
-        if "_sanitize_env_source(combined)" not in src:
-            src = src.replace(
-                "if not combined.strip():\n        return {}\n    code_hash",
-                "if not combined.strip():\n        return {}\n    combined = _sanitize_env_source(combined)\n    if not combined.strip():\n        return {}\n    code_hash",
-                1,
-            )
-
     g: dict = {}
     exec(compile(src, "runner_remote.py", "exec"), g, g)
 
@@ -132,7 +94,6 @@ def _sanitize_env_source(src: str) -> str:
                     return c, {}
             return None, {}
         g['match_command'] = match_command
-        globals()['match_command'] = match_command
 
     if callable(_orig_run):
         def run_command(db, bot, account, command, update, secrets=None, options=None,
@@ -145,6 +106,7 @@ def _sanitize_env_source(src: str) -> str:
                     id=command.get('id'),
                     name=command.get('name') or command.get('trigger') or '',
                 )
+            # TBC: unwrap accidental {options, value} so scalar options stay scalar
             if isinstance(options, dict) and 'options' in options and 'json' not in options and 'data' not in options and not options.get('__in_error_handler'):
                 inner = options.get('options')
                 if isinstance(inner, (str, int, float, bool)) or inner is None:
@@ -158,6 +120,5 @@ def _sanitize_env_source(src: str) -> str:
                 _skip_error_handler=_skip_error_handler, capture=capture,
             )
         g['run_command'] = run_command
-        globals()['run_command'] = run_command
 
 _bootstrap()
