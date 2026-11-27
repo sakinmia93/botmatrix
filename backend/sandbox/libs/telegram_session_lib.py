@@ -10,7 +10,6 @@ import re
 import secrets
 import sys
 import time
-from typing import Any, Optional
 
 
 def _err(msg: str, code: str = "error", **extra):
@@ -23,6 +22,15 @@ def _ok(status: str = "ok", **data):
     out = {"ok": True, "success": True, "status": status}
     out.update(data)
     return out
+
+
+def _norm_phone(phone: str) -> str:
+    p = re.sub(r"[^\d+]" , "", str(phone or "").strip())
+    # fix: keep digits and leading +
+    p = re.sub(r"[^0-9+]", "", str(phone or "").strip())
+    if p and not p.startswith("+"):
+        p = "+" + p.lstrip("+")
+    return p
 
 
 class _FallbackTelegramSession:
@@ -84,10 +92,8 @@ class _FallbackTelegramSession:
             api_id = int(api_id)
         except Exception:
             return _err("API ID is not valid", "api_id_invalid")
-        phone = re.sub(r"[^\\d+]", "", str(phone or "").strip())
-        if phone and not phone.startswith("+"):
-            phone = "+" + phone
-        if not re.fullmatch(r"\\+\\d{8,15}", phone or ""):
+        phone = _norm_phone(phone)
+        if not re.fullmatch(r"\+[0-9]{8,15}", phone or ""):
             return _err("Phone must be international format e.g. +8801XXXXXXXXX", "bad_phone")
         if not api_hash or len(str(api_hash).strip()) < 16:
             return _err("API Hash is not valid", "api_hash_invalid")
@@ -115,10 +121,10 @@ class _FallbackTelegramSession:
                    country_code=rec["country_code"], device_model=rec["device_model"],
                    system_version=rec["system_version"], app_version=rec["app_version"],
                    tags=rec["tags"],
-                   message="Session record created. Full Telethon sendCode needs telethon payload deployed.")
+                   message="Session created. OTP needs full Telethon pack on server.")
 
     def sendCode(self, session, via=None):
-        return _err("Full MTProto payload not loaded yet. Redeploy with p0-p2 shards or wait for telethon pack.", "not_installed")
+        return _err("Telethon full pack not on server yet — create/status/list work; OTP needs pack.", "not_installed")
 
     def send_code(self, session, via=None):
         return self.sendCode(session, via)
@@ -130,13 +136,13 @@ class _FallbackTelegramSession:
         return self.sendCode(session, via)
 
     def verifyCode(self, session, code):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def verify_code(self, session, code):
         return self.verifyCode(session, code)
 
     def verifyPassword(self, session, password):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def verify_password(self, session, password):
         return self.verifyPassword(session, password)
@@ -168,8 +174,11 @@ class _FallbackTelegramSession:
         rec = self._load(sid) if sid else None
         if not rec:
             return _err("Session not found", "bad_session")
-        return _ok(rec.get("status") or "unknown", session_id=sid, **{k: rec.get(k) for k in
-                    ("status", "phone", "country", "country_code", "device_model", "tags", "health")})
+        return _ok(rec.get("status") or "unknown", session_id=sid,
+                   status=rec.get("status"), phone=rec.get("phone"),
+                   country=rec.get("country"), country_code=rec.get("country_code"),
+                   device_model=rec.get("device_model"), tags=rec.get("tags") or [],
+                   health=rec.get("health"))
 
     def listSessions(self, **kw):
         return self.list_sessions(**kw)
@@ -202,7 +211,7 @@ class _FallbackTelegramSession:
         return _ok("ok", sessions=out, count=len(out))
 
     def checkAccount(self, session):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def check_account(self, session):
         return self.checkAccount(session)
@@ -256,10 +265,8 @@ class _FallbackTelegramSession:
         return self.detect_country(phone)
 
     def detect_country(self, phone):
-        phone = re.sub(r"[^\\d+]", "", str(phone or "").strip())
-        if phone and not phone.startswith("+"):
-            phone = "+" + phone
-        digits = re.sub(r"\\D", "", phone)
+        phone = _norm_phone(phone)
+        digits = re.sub(r"\D", "", phone)
         table = {"880": ("BD", "Bangladesh"), "91": ("IN", "India"), "1": ("US", "United States"),
                  "971": ("AE", "United Arab Emirates"), "44": ("GB", "United Kingdom")}
         for n in (3, 2, 1):
@@ -270,7 +277,7 @@ class _FallbackTelegramSession:
         return _ok("ok", phone=phone, country_code="XX", country="Unknown", dial_code=None)
 
     def getMe(self, session):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def get_me(self, session):
         return self.getMe(session)
@@ -299,93 +306,91 @@ class _FallbackTelegramSession:
             return _err("API ID invalid", "api_id_invalid")
         if not api_hash or len(str(api_hash)) < 16:
             return _err("API Hash invalid", "api_hash_invalid")
-        return _ok("ok", valid=True, api_id=int(api_id), message="Format OK (live connect needs full payload)")
+        return _ok("ok", valid=True, api_id=int(api_id), message="Format OK")
 
     def validate_api(self, api_id, api_hash):
         return self.validateApi(api_id, api_hash)
 
     def sendMessage(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def send_message(self, *a, **k):
         return self.sendMessage(*a, **k)
 
     def getMessages(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def get_messages(self, *a, **k):
         return self.getMessages(*a, **k)
 
     def deleteMessages(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def setName(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def set_name(self, *a, **k):
         return self.setName(*a, **k)
 
     def setUsername(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def set_username(self, *a, **k):
         return self.setUsername(*a, **k)
 
     def updateProfile(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def update_profile(self, *a, **k):
         return self.updateProfile(*a, **k)
 
     def getStarsBalance(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def get_stars_balance(self, *a, **k):
         return self.getStarsBalance(*a, **k)
 
     def listGifts(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def list_gifts(self, *a, **k):
         return self.listGifts(*a, **k)
 
     def sendGift(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def send_gift(self, *a, **k):
         return self.sendGift(*a, **k)
 
     def getDialogs(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def get_dialogs(self, *a, **k):
         return self.getDialogs(*a, **k)
 
     def getContacts(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def get_contacts(self, *a, **k):
         return self.getContacts(*a, **k)
 
     def joinChat(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def join_chat(self, *a, **k):
         return self.joinChat(*a, **k)
 
     def leaveChat(self, *a, **k):
-        return _err("Full MTProto payload not loaded yet.", "not_installed")
+        return _err("Telethon full pack not on server yet.", "not_installed")
 
     def leave_chat(self, *a, **k):
         return self.leaveChat(*a, **k)
 
 
 def _try_load_full():
-    """Prefer p0..p2 or tg_gz shards if present and valid; else None."""
     here = Path(__file__).resolve().parent
     full = here / "_telegram_session_full.py"
     try:
-        # p0..p2 pack
         pfiles = [here / f"p{i}.b64" for i in range(3)]
         if all(p.exists() for p in pfiles):
             data = gzip.decompress(base64.b64decode("".join(p.read_text().strip() for p in pfiles)))
