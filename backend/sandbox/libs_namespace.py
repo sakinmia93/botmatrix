@@ -17,6 +17,7 @@ from backend.sandbox.libs.menu_lib import MenuLib
 from backend.sandbox.libs.logger_lib import LoggerLib
 from backend.sandbox.libs.stats_lib import StatsLib
 from backend.sandbox.libs.reflib_lib import RefLib
+# image_lib imported lazily in __init__ (cv2/numpy are heavy)
 from backend.sandbox.libs.request_lib import RequestModule
 from backend.sandbox.libs.premium_gift_lib import PremiumGiftLib
 from backend.sandbox.libs.keyboard_lib import KeyboardLib
@@ -29,6 +30,22 @@ from backend.sandbox.libs.crypto_lib import CryptoLib
 from backend.sandbox.libs.payments_lib import (
     OxapayLib, CoinbaseLib, CoinpaymentsLib,
 )
+try:
+    from backend.sandbox.libs.telegram_session_lib import TelegramSession as _TelegramSessionCls
+except Exception as _tg_imp_err:  # telethon missing / expand failure / syntax
+    _TelegramSessionCls = None
+    _TG_IMP_ERR = str(_tg_imp_err)
+else:
+    _TG_IMP_ERR = None
+
+try:
+    from backend.sandbox.libs.mention_lib import MentionLib as _MentionLibCls
+except Exception as _mn_imp_err:
+    _MentionLibCls = None
+    _MN_IMP_ERR = str(_mn_imp_err)
+else:
+    _MN_IMP_ERR = None
+
 from backend.config import BASE_URL
 
 
@@ -84,6 +101,7 @@ class LibsNamespace:
         self.logger = self.Logger
         self.Stats = StatsLib(db=db, bot_id=bot_id)
         self.stats = self.Stats
+        # TeleBot Studio style
         _uname = None
         try:
             from backend import models as _m
@@ -135,54 +153,85 @@ class LibsNamespace:
         self.TON = _ton
         self.EVM = self.web3lib
 
-        # Telegram user client (MTProto) — always set attribute (never AttributeError)
-        try:
-            from backend.sandbox.libs.telegram_session_lib import TelegramSession as _TS
-            _tg_sess = _TS(db=db, bot_id=bot_id, base_url=BASE_URL)
-            self.TelegramSession = _tg_sess
-            self.telegram_session = _tg_sess
-            self.TgSession = _tg_sess
-        except Exception as _tg_err:
-            class _TgStub:
-                def __getattr__(self, n):
-                    raise RuntimeError(
-                        "TelegramSession unavailable (install telethon / deploy telegram_session_lib.py). "
-                        + str(_tg_err)
-                    )
-            self.TelegramSession = self.telegram_session = self.TgSession = _TgStub()
+        # Telegram user client (MTProto) + mass-mention helpers
+        # Always expose the attribute so SECTION code never hits AttributeError.
+        # NOTE: never close over `except Exception as X` variables inside nested
+        # classes/methods — Python 3.11+ deletes them after the except block and
+        # later calls raise: cannot access free variable 'X' ...
+        if _TelegramSessionCls is not None:
+            try:
+                _tg_sess = _TelegramSessionCls(db=db, bot_id=bot_id, base_url=BASE_URL)
+            except Exception as _e:
+                _tg_fail_msg = "TelegramSession failed to initialize: " + str(_e)
+                class _TgSessBroken:
+                    def __getattr__(self, name, _msg=_tg_fail_msg):
+                        raise RuntimeError(_msg)
+                _tg_sess = _TgSessBroken()
+        else:
+            _tg_miss_msg = (
+                "TelegramSession library is not available. "
+                "Install telethon and ensure telegram_session_lib.py is deployed. "
+                "Import error: " + str(_TG_IMP_ERR)
+            )
+            class _TgSessMissing:
+                def __getattr__(self, name, _msg=_tg_miss_msg):
+                    raise RuntimeError(_msg)
+            _tg_sess = _TgSessMissing()
+        self.TelegramSession = _tg_sess
+        self.telegram_session = _tg_sess
+        self.TgSession = _tg_sess
 
-        try:
-            from backend.sandbox.libs.mention_lib import MentionLib as _ML
-            _mention = _ML(db=db, bot_id=bot_id, bot_token=_tok)
-            self.Mention = _mention
-            self.mention = _mention
-        except Exception as _m_err:
-            class _MStub:
-                def __getattr__(self, n):
-                    raise RuntimeError("Mention lib unavailable: " + str(_m_err))
-            self.Mention = self.mention = _MStub()
+        if _MentionLibCls is not None:
+            try:
+                _mention = _MentionLibCls(db=db, bot_id=bot_id, bot_token=_tok)
+            except Exception as _e:
+                _mn_fail_msg = "Mention failed to initialize: " + str(_e)
+                class _MentionBroken:
+                    def __getattr__(self, name, _msg=_mn_fail_msg):
+                        raise RuntimeError(_msg)
+                _mention = _MentionBroken()
+        else:
+            _mn_miss_msg = (
+                "Mention library is not available. Import error: " + str(_MN_IMP_ERR)
+            )
+            class _MentionMissing:
+                def __getattr__(self, name, _msg=_mn_miss_msg):
+                    raise RuntimeError(_msg)
+            _mention = _MentionMissing()
+        self.Mention = _mention
+        self.mention = _mention
 
+        # TBC crypto network aliases (docs: libs.Polygon, libs.ARB, ...)
         class _NetWeb3:
             def __init__(self, w3, network):
                 self._w3 = w3
                 self._network = network
             def send(self, value, to, contract, private_key=None, **k):
+                """Deprecated TBC API: send tokens through a contract on this chain."""
                 return self._w3.sendETHER(value, to, private_key=private_key, contract_address=contract, network=self._network, **k)
             def _native(self, value, to, private_key=None, **k):
                 return self._w3.sendNativeCoin(value, to, private_key=private_key, network=self._network, **k)
             def __getattr__(self, name):
                 if name.startswith("send") and name not in ("sendNativeCoin", "sendETHER", "sendCoin", "sendToken", "send_ether", "sendEther", "sendether", "send_native_coin", "send_navive_coin") and not hasattr(self._w3, name):
-                    return self._native
+                    return self._native      # sendPolygon, sendARB, sendTTcoin, sendTomochain, ...
                 attr = getattr(self._w3, name)
                 if callable(attr):
                     def wrapper(*a, **k):
+                        # inject default network only when not already provided
                         if "network" not in k and not a:
                             k["network"] = self._network
                         elif "network" not in k and name in (
                             "sendNativeCoin", "sendCoin", "sendToken", "sendETHER",
                             "fetchBalance", "balance", "fetchTokenBalance", "get_default_rpc",
                         ):
-                            k.setdefault("network", self._network)
+                            # keyword-only inject when method uses network=
+                            import inspect
+                            try:
+                                sig = inspect.signature(attr)
+                                if "network" in sig.parameters:
+                                    k.setdefault("network", self._network)
+                            except Exception:
+                                k.setdefault("network", self._network)
                         return attr(*a, **k)
                     return wrapper
                 return attr
